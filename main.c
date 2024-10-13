@@ -14,17 +14,20 @@
         goto cleanup; \
     }
 
-// 함수 선언부
 static bool getStatusHandler(LSHandle *sh, LSMessage *message, void *user_data);
 static bool getNetworksHandler(LSHandle *sh, LSMessage *message, void *user_data);
 void callGetStatus(LSHandle *serviceHandle);
 void callGetNetworks(LSHandle *serviceHandle);
+void cancelSubscriptions(void);
+
+LSMessageToken getStatusToken = LSMESSAGE_TOKEN_INVALID;   // 구독을 취소하기 위한 토큰
+LSMessageToken getNetworksToken = LSMESSAGE_TOKEN_INVALID; // 구독을 취소하기 위한 토큰
 
 int main(int argc, char *argv[]) {
     bool retVal;
     LSError lsError;
     LSHandle *serviceHandle = NULL; // 서비스 핸들
-    GMainLoop *mainLoop = NULL; // 메인 이벤트 루프
+    GMainLoop *mainLoop = NULL;     // 메인 이벤트 루프
 
     LSErrorInit(&lsError);
 
@@ -54,6 +57,7 @@ int main(int argc, char *argv[]) {
 
 cleanup:
     // 종료 시 자원 해제
+    cancelSubscriptions(); // 구독 취소
     if (serviceHandle) {
         LSUnregister(serviceHandle, &lsError);
     }
@@ -67,17 +71,16 @@ cleanup:
 void callGetStatus(LSHandle *serviceHandle) {
     bool retVal;
     LSError lsError;
-    LSMessageToken token = LSMESSAGE_TOKEN_INVALID;
 
     LSErrorInit(&lsError);
 
     // "getStatus" API 구독 호출
     retVal = LSCall(serviceHandle,
                     "luna://com.webos.service.connectionmanager/getStatus",
-                    "{\"subscribe\":true}",
-                    getStatusHandler,  // 응답이 도착하면 호출될 콜백 함수
-                    NULL,  // 사용자 데이터 없음
-                    &token,
+                    "{\"subscribe\":true}",   // 구독 설정
+                    getStatusHandler,         // 응답이 도착하면 호출될 콜백 함수
+                    NULL,                     // 사용자 데이터 없음
+                    &getStatusToken,          // 구독을 취소할 때 사용할 토큰
                     &lsError);
     HANDLE_ERROR(retVal, lsError);
 
@@ -92,17 +95,16 @@ cleanup:
 void callGetNetworks(LSHandle *serviceHandle) {
     bool retVal;
     LSError lsError;
-    LSMessageToken token = LSMESSAGE_TOKEN_INVALID;
 
     LSErrorInit(&lsError);
 
     // "getNetworks" API 구독 호출
     retVal = LSCall(serviceHandle,
                     "luna://com.webos.service.wifi/getNetworks",
-                    "{\"subscribe\":true}",
-                    getNetworksHandler,  // 응답이 도착하면 호출될 콜백 함수
-                    NULL,  // 사용자 데이터 없음
-                    &token,
+                    "{\"subscribe\":true}",   // 구독 설정
+                    getNetworksHandler,       // 응답이 도착하면 호출될 콜백 함수
+                    NULL,                     // 사용자 데이터 없음
+                    &getNetworksToken,        // 구독을 취소할 때 사용할 토큰
                     &lsError);
     HANDLE_ERROR(retVal, lsError);
 
@@ -164,6 +166,7 @@ static bool getStatusHandler(LSHandle *sh, LSMessage *message, void *user_data) 
     return true;
 }
 
+
 // Wi-Fi 네트워크 리스트를 처리하는 핸들러
 static bool getNetworksHandler(LSHandle *sh, LSMessage *message, void *user_data) {
     const char *payload = LSMessageGetPayload(message);  // 응답으로 받은 JSON 데이터
@@ -201,6 +204,30 @@ static bool getNetworksHandler(LSHandle *sh, LSMessage *message, void *user_data
 
     free(returnValue);
     return true;
+}
+
+// 구독 취소 함수
+void cancelSubscriptions(void) {
+    LSError lsError;
+    LSErrorInit(&lsError);
+
+    // getStatus 구독 취소
+    if (getStatusToken != LSMESSAGE_TOKEN_INVALID) {
+        if (!LSCallCancel(NULL, getStatusToken, &lsError)) {
+            LSErrorPrint(&lsError, stderr);
+        }
+        getStatusToken = LSMESSAGE_TOKEN_INVALID;  // 토큰 초기화
+    }
+
+    // getNetworks 구독 취소
+    if (getNetworksToken != LSMESSAGE_TOKEN_INVALID) {
+        if (!LSCallCancel(NULL, getNetworksToken, &lsError)) {
+            LSErrorPrint(&lsError, stderr);
+        }
+        getNetworksToken = LSMESSAGE_TOKEN_INVALID;  // 토큰 초기화
+    }
+
+    LSErrorFree(&lsError);
 }
 
 // JSON 응답에서 특정 키의 값을 추출하는 함수
