@@ -4,7 +4,7 @@
 #include <glib.h>
 #include <luna-service2/lunaservice.h>
 
-// Error handling macro
+// 에러 처리 매크로
 #define HANDLE_ERROR(retVal, lsError) \
     if (!retVal) { \
         LSErrorPrint(&lsError, stderr); \
@@ -12,42 +12,43 @@
         goto cleanup; \
     }
 
-// Function prototypes
+// 함수 선언부
 static bool getStatusHandler(LSHandle *sh, LSMessage *message, void *user_data);
-static bool getArpingHandler(LSHandle *sh, LSMessage *message, void *user_data);
+static bool getNetworksHandler(LSHandle *sh, LSMessage *message, void *user_data);
 void callGetStatus(LSHandle *serviceHandle, GMainLoop *mainLoop);
-void callArping(LSHandle *serviceHandle, GMainLoop *mainLoop, const char *ifName, const char *ipAddress);
+void callGetNetworks(LSHandle *serviceHandle, GMainLoop *mainLoop);
 
 int main(int argc, char *argv[]) {
     bool retVal;
     LSError lsError;
-    LSHandle *serviceHandle = NULL;
-    GMainLoop *mainLoop = NULL;
+    LSHandle *serviceHandle = NULL; // 서비스 핸들
+    GMainLoop *mainLoop = NULL; // 메인 이벤트 루프
 
     LSErrorInit(&lsError);
 
-    // Initialize GMainLoop
+    // GMainLoop 초기화: 이벤트 루프 생성
     mainLoop = g_main_loop_new(NULL, FALSE);
     if (!mainLoop) {
-        fprintf(stderr, "Failed to create main loop\n");
+        fprintf(stderr, "Failed to create main loop\n\n");
         return EXIT_FAILURE;
     }
 
-    // Register the service
+    // 서비스 등록: 'com.acp.lcd'라는 이름으로 서비스 등록
     retVal = LSRegister("com.acp.lcd", &serviceHandle, &lsError);
     HANDLE_ERROR(retVal, lsError);
 
-    // Attach the service to the main loop
+    // 서비스 핸들을 메인 루프에 연결
     retVal = LSGmainAttach(serviceHandle, mainLoop, &lsError);
     HANDLE_ERROR(retVal, lsError);
 
-    // Call the getStatus API
+    // 네트워크 상태 정보를 요청하는 API 호출
     callGetStatus(serviceHandle, mainLoop);
 
-    // Run the main loop
+    // 메인 루프 실행: 프로그램이 이벤트를 대기하면서 실행됨
     g_main_loop_run(mainLoop);
 
 cleanup:
+    // 종료 시 자원 해제
     if (serviceHandle) {
         LSUnregister(serviceHandle, &lsError);
     }
@@ -57,6 +58,7 @@ cleanup:
     return retVal ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+// 네트워크 상태 정보를 요청하는 API 호출 함수
 void callGetStatus(LSHandle *serviceHandle, GMainLoop *mainLoop) {
     bool retVal;
     LSError lsError;
@@ -64,11 +66,11 @@ void callGetStatus(LSHandle *serviceHandle, GMainLoop *mainLoop) {
 
     LSErrorInit(&lsError);
 
-    // Call the getStatus API
+    // "getStatus" API 호출: 네트워크 상태 정보를 가져옴
     retVal = LSCallOneReply(serviceHandle,
                             "luna://com.webos.service.connectionmanager/getStatus",
                             "{}",
-                            getStatusHandler,
+                            getStatusHandler,  // 응답이 도착하면 호출될 콜백 함수
                             mainLoop,
                             &token,
                             &lsError);
@@ -81,22 +83,19 @@ cleanup:
     }
 }
 
-void callArping(LSHandle *serviceHandle, GMainLoop *mainLoop, const char *ifName, const char *ipAddress) {
+// Wi-Fi 신호 강도를 가져오는 API 호출 함수
+void callGetNetworks(LSHandle *serviceHandle, GMainLoop *mainLoop) {
     bool retVal;
     LSError lsError;
     LSMessageToken token = LSMESSAGE_TOKEN_INVALID;
-    char payload[256];
 
     LSErrorInit(&lsError);
 
-    // Create the payload for the arping call
-    snprintf(payload, sizeof(payload), "{\"ifName\":\"%s\",\"ipAddress\":\"%s\"}", ifName, ipAddress);
-
-    // Call the arping API
+    // "getNetworks" API 호출: 주변의 Wi-Fi 네트워크 신호 강도를 가져옴
     retVal = LSCallOneReply(serviceHandle,
-                            "luna://com.webos.service.nettools/arping",
-                            payload,
-                            getArpingHandler,
+                            "luna://com.webos.service.wifi/getNetworks",
+                            "{}",
+                            getNetworksHandler,  // 응답이 도착하면 호출될 콜백 함수
                             mainLoop,
                             &token,
                             &lsError);
@@ -109,15 +108,16 @@ cleanup:
     }
 }
 
+// JSON 응답에서 특정 키의 값을 추출하는 함수
 static char* extract_json_value(const char* json, const char* key) {
-    char* start = strstr(json, key);
+    char* start = strstr(json, key);  // 키 검색
     if (!start) return NULL;
-    start = strchr(start, ':');
+    start = strchr(start, ':');  // ':' 이후 값 시작
     if (!start) return NULL;
     start++;
-    while (*start == ' ' || *start == '\"') start++;
+    while (*start == ' ' || *start == '\"') start++;  // 공백과 따옴표 무시
     char* end = start;
-    while (*end && *end != '\"' && *end != ',' && *end != '}') end++;
+    while (*end && *end != '\"' && *end != ',' && *end != '}') end++;  // 값 끝까지 이동
     size_t len = end - start;
     char* value = (char*)malloc(len + 1);
     strncpy(value, start, len);
@@ -125,92 +125,94 @@ static char* extract_json_value(const char* json, const char* key) {
     return value;
 }
 
+// 네트워크 상태 API 응답을 처리하는 핸들러
 static bool getStatusHandler(LSHandle *sh, LSMessage *message, void *user_data) {
-    const char *payload = LSMessageGetPayload(message);
+    const char *payload = LSMessageGetPayload(message);  // 응답으로 받은 JSON 데이터
     printf("Response: %s\n", payload);
 
-    // Extract values from JSON response
+    // JSON 응답에서 필요한 값 추출
     char* returnValue = extract_json_value(payload, "\"returnValue\"");
     char* offlineMode = extract_json_value(payload, "\"offlineMode\"");
     char* isInternetConnectionAvailable = extract_json_value(payload, "\"isInternetConnectionAvailable\"");
 
-    // Print extracted values
+    // 추출한 값 출력
     printf("Return Value: %s\n", returnValue);
     printf("Offline Mode: %s\n", offlineMode);
     printf("Is Internet Connection Available: %s\n", isInternetConnectionAvailable);
 
-    // Check Wired state
+    // Wired(유선) 연결 상태 처리
     char* wiredStateStart = strstr(payload, "\"wired\"");
     if (wiredStateStart) {
         char* wiredState = extract_json_value(wiredStateStart, "\"state\"");
         if (wiredState && strcmp(wiredState, "connected") == 0) {
+            // 유선 연결 상태에서 IP, 게이트웨이, 서브넷 마스크 정보 추출
             char* ipAddress = extract_json_value(wiredStateStart, "\"ipAddress\"");
             char* gateway = extract_json_value(wiredStateStart, "\"gateway\"");
             char* netmask = extract_json_value(wiredStateStart, "\"netmask\"");
-            printf("Wired is connected\n");
-            printf("Wired IP Address: %s\n", ipAddress);
-            printf("Wired Gateway: %s\n", gateway);
-            printf("Wired Netmask: %s\n", netmask);
-            callArping(sh, (GMainLoop *)user_data, "eth0", ipAddress);
+            printf("유선 연결됨\n");
+            printf("유선 IP: %s, 게이트웨이: %s, 넷마스크: %s\n", ipAddress, gateway, netmask);
+            
+            // 유선 연결 정보를 engine 파일에 기록
+            FILE *engine = fopen(ENGINE_FILE, "w");
+            if (engine) {
+                fprintf(engine, "103 %s|%s|%s|false|\n", ipAddress, gateway, netmask);
+                //fprintf(engine, "104 Eth|Strong|\n");  // 유선은 필요 없음
+                fclose(engine);
+            }
             free(wiredState);
             free(ipAddress);
             free(gateway);
             free(netmask);
             return true;
-        } else {
-            printf("Wired is not connected\n");
         }
         free(wiredState);
     }
 
-    // Check WiFi state
+    // Wi-Fi 연결 상태 처리 -> 이더넷에 연결되어 있다면 확인 할 필요 없음
     char* wifiStateStart = strstr(payload, "\"wifi\"");
     if (wifiStateStart) {
         char* wifiState = extract_json_value(wifiStateStart, "\"state\"");
         if (wifiState && strcmp(wifiState, "connected") == 0) {
-            char* ipAddress = extract_json_value(wifiStateStart, "\"ipAddress\"");
-            char* gateway = extract_json_value(wifiStateStart, "\"gateway\"");
-            char* netmask = extract_json_value(wifiStateStart, "\"netmask\"");
-            printf("WiFi is connected\n");
-            printf("WiFi IP Address: %s\n", ipAddress);
-            printf("WiFi Gateway: %s\n", gateway);
-            printf("WiFi Netmask: %s\n", netmask);
-            callArping(sh, (GMainLoop *)user_data, "wlan0", ipAddress);
-            free(wifiState);
-            free(ipAddress);
-            free(gateway);
-            free(netmask);
-            return true;
+            // Wi-Fi 연결 상태일 경우 신호 강도 가져오는 API 호출
+            printf("Wi-Fi 연결됨\n");
+            callGetNetworks(sh, (GMainLoop *)user_data);
         } else {
-            printf("WiFi is not connected\n");
+            printf("Wi-Fi 연결되지 않음\n");
         }
         free(wifiState);
     }
 
-    // Free allocated memory
     free(returnValue);
     free(offlineMode);
     free(isInternetConnectionAvailable);
 
-    // Quit main loop if no further actions are needed
-    GMainLoop *mainLoop = (GMainLoop *)user_data;
-    g_main_loop_quit(mainLoop);
-
     return true;
 }
 
-static bool getArpingHandler(LSHandle *sh, LSMessage *message, void *user_data) {
-    const char *payload = LSMessageGetPayload(message);
-    printf("Arping Response: %s\n", payload);
+// Wi-Fi 신호 강도를 처리하는 핸들러
+static bool getNetworksHandler(LSHandle *sh, LSMessage *message, void *user_data) {
+    const char *payload = LSMessageGetPayload(message);  // 응답으로 받은 JSON 데이터
+    printf("Wi-Fi Networks Response: %s\n", payload);
 
-    // Extract MAC address from JSON response
-    char* macAddress = extract_json_value(payload, "\"macAddress\"");
-    if (macAddress) {
-        printf("MAC Address: %s\n", macAddress);
-        free(macAddress);
+    // JSON 응답에서 Wi-Fi 신호 강도를 추출
+    char* signalBars = extract_json_value(payload, "\"signalBars\"");
+    int signalStrength = atoi(signalBars);  // 신호 강도를 숫자로 변환
+    char* signalQuality = "Weak";  // 기본적으로 약한 신호로 설정
+    if (signalStrength >= 3) {
+        signalQuality = "Strong";  // 신호 강도 3 이상은 강한 신호로 판단
+    } else if (signalStrength == 2) {
+        signalQuality = "Medium";  // 신호 강도 2는 중간 신호로 판단
     }
 
-    GMainLoop *mainLoop = (GMainLoop *)user_data;
-    g_main_loop_quit(mainLoop);
+    printf("Wi-Fi 신호 강도: %s\n", signalQuality);
+
+    // Wi-Fi 신호 강도 정보를 engine 파일에 기록
+    FILE *engine = fopen("engine", "w");
+    if (engine) {
+        fprintf(engine, "104 Wi-Fi|%s|\n", signalQuality);
+        fclose(engine);
+    }
+
+    free(signalBars);
     return true;
 }
