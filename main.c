@@ -52,6 +52,9 @@ int main(int argc, char *argv[]) {
     // Wi-Fi 네트워크 리스트 구독 설정
     callGetNetworks(serviceHandle);
 
+    // 진행률 구독 설정
+    // callProgressBar(serviceHandle);  // Progress Bar API 호출 추가
+
     // 메인 루프 실행
     g_main_loop_run(mainLoop);
 
@@ -114,6 +117,32 @@ cleanup:
         LSErrorFree(&lsError);
     }
 }
+
+// 진행률 값을 구독하는 함수
+// void callProgressBar(LSHandle *serviceHandle) {
+//     bool retVal;
+//     LSError lsError;
+//     LSMessageToken token = LSMESSAGE_TOKEN_INVALID;
+
+//     LSErrorInit(&lsError);
+
+//     // Progress Bar API 구독 호출
+//     retVal = LSCall(serviceHandle,
+//                     "luna://com.webos.service.progress/getProgress", // Progress Bar API 호출 경로
+//                     "{\"subscribe\":true}",                           // 구독 설정
+//                     progressHandler,                                  // 응답이 도착하면 호출될 콜백 함수
+//                     NULL,                                             // 사용자 데이터 없음
+//                     &token,                                           // 구독을 취소할 때 사용할 토큰
+//                     &lsError);
+//     HANDLE_ERROR(retVal, lsError);
+
+// cleanup:
+//     if (!retVal) {
+//         LSErrorPrint(&lsError, stderr);
+//         LSErrorFree(&lsError);
+//     }
+// }
+
 
 // 네트워크 상태 API 응답을 처리하는 핸들러
 static bool getStatusHandler(LSHandle *sh, LSMessage *message, void *user_data) {
@@ -205,6 +234,44 @@ static bool getNetworksHandler(LSHandle *sh, LSMessage *message, void *user_data
     free(returnValue);
     return true;
 }
+
+// // 진행률 API 응답을 처리하는 핸들러
+// static bool progressHandler(LSHandle *sh, LSMessage *message, void *user_data) {
+//     const char *payload = LSMessageGetPayload(message);  // 응답으로 받은 JSON 데이터
+//     printf("Progress Bar Response: %s\n", payload);
+
+//     // JSON 응답에서 returnValue 값을 확인
+//     char* returnValue = extract_json_value(payload, "\"returnValue\"");
+//     if (strcmp(returnValue, "true") == 0) {
+//         // 성공 처리
+//         printf("Progress bar updated successfully.\n");
+
+//         // 진행률 값 추출
+//         char* progressValueStr = extract_json_value(payload, "\"progress\"");
+//         int progressValue = atoi(progressValueStr);  // 진행률을 숫자로 변환
+
+//         // 진행률 값 처리 (엔진 파일에 기록)
+//         ProgressValue.ulProgressValue = progressValue;
+//         FILE *engine = fopen(ENGINE_FILE, "w");
+//         if (engine) {
+//             fprintf(engine, "100 %d\n", progressValue);  // 예: 100 30 (30% 진행률)
+//             fclose(engine);
+//         }
+
+//         // 진행률이 100%일 경우 처리
+//         if (progressValue >= 100) {
+//             printf("Progress complete.\n");
+//         }
+
+//         free(progressValueStr);
+//     } else {
+//         // 실패 처리
+//         printf("Failed to update progress bar.\n");
+//     }
+
+//     free(returnValue);
+//     return true;
+// }
 
 // 구독 취소 함수
 void cancelSubscriptions(void) {
