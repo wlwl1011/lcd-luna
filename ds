@@ -1,56 +1,48 @@
-void Create_NetworkInfoPage()
+
+void Create_DeviceStatusPage()
 {
-	
 	lv_ui*ui=Ui_GetInstance();
 
-	ui->mpNetWorkInfoPage=calloc(1,sizeof(ui_NetworkInfoPage));
-	if(ui->mpNetWorkInfoPage==NULL)
+	ui->mpDeviceStatusPage=calloc(1,sizeof(ui_DeviceStatus));
+	if(ui->mpDeviceStatusPage==NULL)
 	{
-		lv_log("%s\n","Failed to allocate ui->mpNetworkInofPage");
+		lv_log("%s\n","Failed to allocate ui->Device Status");
 	}
-	//Create Page Area
-	ui->mpNetWorkInfoPage->mpPageWindowArea = CreatePageArea(ui->mpPageWindowArea);
+	ui->mpDeviceStatusPage->mpPageWindowArea=CreatePageArea(ui->mpPageWindowArea);
 
-	//Create Title
-	ui->mpNetWorkInfoPage->mpLayoutTitle = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,TITLE_X_Y_HEIGHT_WIDTH);
-	lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutTitle, ui->mpTopArea, LV_ALIGN_OUT_BOTTOM_MID, 0,0);
+	ui->mpDeviceStatusPage->mpLayoutTitleText = CreateLayout(ui->mpDeviceStatusPage->mpPageWindowArea, LV_ALIGN_CENTER, TITLE_X_Y_HEIGHT_WIDTH);
 
-	ui->mpNetWorkInfoPage->mpLabelNetworkInfo = CreateTitle(ui->mpNetWorkInfoPage->mpLayoutTitle, TR_TITLE_NETWORK_INFO);
-	lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelNetworkInfo, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);	
+	lv_obj_align_to(ui->mpDeviceStatusPage->mpLayoutTitleText, ui->mpTopArea, LV_ALIGN_OUT_BOTTOM_MID, 0,0);
 
-	if(ui->isNetworkNotConnected)
+	LOG_CORD(ui->mpDeviceStatusPage->mpLayoutTitleText, ui->mpDeviceStatusPage->mpLayoutTitleText);
+
+	ui->mpDeviceStatusPage->mpLabelDeviceStatus=CreateTitle(ui->mpDeviceStatusPage->mpLayoutTitleText,TR_TITLE_DEVICE_STATUS);
+	lv_obj_set_style_text_font(ui->mpDeviceStatusPage->mpLabelDeviceStatus, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	if(ui->isStatusOK)
 	{
-		
-		ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 135, 40);
+		ui->mpDeviceStatusPage->mpLayouDeviceOKStatus = CreateLayout(ui->mpDeviceStatusPage->mpPageWindowArea,LV_ALIGN_CENTER,0,0,145,40);
 
-
-		lv_obj_set_size(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 132, 40); // 🔥 크기 설정
-		lv_obj_align(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_ALIGN_CENTER, 0, 0); // 🔥 중앙 정렬
+		lv_obj_set_size(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, 145, 40); // 🔥 크기 설정
 
 		// 🔹 배경 스타일 적용 (둥근 모서리)
-		lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, lv_color_make(51,51,51), LV_PART_MAIN);
-		lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 50, LV_PART_MAIN); // 🔥 더 둥글게 조정 가능
-		lv_obj_set_style_bg_opa(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_OPA_COVER, LV_PART_MAIN);
-		lv_obj_set_style_border_width(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus,0, LV_PART_MAIN);
+		lv_obj_set_style_bg_color(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, lv_color_make(51,51,51), LV_PART_MAIN);
+		lv_obj_set_style_radius(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, 50, LV_PART_MAIN); // 🔥 더 둥글게 조정 가능
+		lv_obj_set_style_bg_opa(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, LV_OPA_COVER, LV_PART_MAIN);
+		lv_obj_set_style_border_width(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus,0, LV_PART_MAIN);
+		
 
 		// 🔹 배경을 뒤로 보내기
-		lv_obj_move_background(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus);
-    
-	
-		lv_obj_set_size(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, lv_pct(100), lv_pct(100)); // 🔥 부모 크기와 동일하게 설정
-		lv_obj_set_flex_flow(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_FLEX_FLOW_ROW);  // 🔥 가로 정렬 (아이콘 왼쪽, 텍스트 오른쪽)
-		lv_obj_set_flex_align(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-		lv_obj_set_style_bg_opa(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_OPA_TRANSP, LV_PART_MAIN); // 🔥 배경 투명하게
+		lv_obj_move_background(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus);
 
-		// 🔹 아이콘 추가 (왼쪽 정렬)
-		extern const lv_img_dsc_t ic_notconnected;        
-		ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
+		lv_obj_set_flex_flow(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, LV_FLEX_FLOW_ROW);  // 🔥 가로 정렬 (아이콘 왼쪽, 텍스트 오른쪽)
+		lv_obj_set_flex_align(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-		// 🔹 텍스트 추가 (오른쪽 정렬)
-		ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_LEFT_MID);
-		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelNotConnected, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
 
-		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
-		ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
+		extern const lv_img_dsc_t ic_status_check;		
+		ui->mpDeviceStatusPage->mpImgStatusOK = CreateImage(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus, &ic_status_check, LV_ALIGN_LEFT_MID, 0, 0);
 
+		ui->mpDeviceStatusPage->mpLabelOKStatus=CreateOButtonLabel(ui->mpDeviceStatusPage->mpLayouDeviceOKStatus,TR_DEVICE_WORKING_NORMALLY,LV_ALIGN_RIGHT_MID);
+		lv_obj_set_style_text_align(ui->mpDeviceStatusPage->mpLabelOKStatus, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+		// lv_obj_align_to(ui->mpDeviceStatusPage->mpLabelOKStatus, ui->mpDeviceStatusPage->mpImgStatusOK, LV_ALIGN_OUT_RIGHT_MID, 8,0);
 	} 
