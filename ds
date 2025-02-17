@@ -2,27 +2,36 @@
 if(ui->isNetworkNotConnected)
 {
     // 🔹 네트워크 상태 레이아웃 생성
-    ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 120, 29);
+    ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 140, 40); // 🔥 크기 증가
 
-    // 🔹 둥근 배경을 위한 별도 컨테이너 생성
+    // 🔹 둥근 배경을 위한 컨테이너 생성 (부모: mpLayoutNetworkStatus)
     ui->mpNetWorkInfoPage->mpBgRound = lv_obj_create(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus);
-    lv_obj_set_size(ui->mpNetWorkInfoPage->mpBgRound, 120, 29); // 🔥 크기 설정
+    lv_obj_set_size(ui->mpNetWorkInfoPage->mpBgRound, 140, 40); // 🔥 크기 설정
     lv_obj_align(ui->mpNetWorkInfoPage->mpBgRound, LV_ALIGN_CENTER, 0, 0); // 🔥 중앙 정렬
 
-    // 🔹 배경 스타일 적용 (둥근 모서리)
+    // 🔹 둥근 배경 스타일 적용 (테두리 제거)
     lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpBgRound, lv_color_make(COLOR_WHITE_RGB), LV_PART_MAIN);
-    lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpBgRound, 15, LV_PART_MAIN); // 🔥 더 둥글게 조정 가능
+    lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpBgRound, 20, LV_PART_MAIN); // 🔥 더 둥글게 (20px)
     lv_obj_set_style_bg_opa(ui->mpNetWorkInfoPage->mpBgRound, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui->mpNetWorkInfoPage->mpBgRound, 0, LV_PART_MAIN); // 🔥 테두리 제거
 
     // 🔹 배경을 뒤로 보내기
     lv_obj_move_background(ui->mpNetWorkInfoPage->mpBgRound);
 
-    // 🔹 아이콘 추가
-    extern const lv_img_dsc_t ic_notconnected;        
-    ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
+    // 🔹 내부 요소 컨테이너 생성 (아이콘 & 텍스트 정렬을 위해)
+    lv_obj_t *mpContent = lv_obj_create(ui->mpNetWorkInfoPage->mpBgRound);
+    lv_obj_set_size(mpContent, lv_pct(100), lv_pct(100)); // 🔥 부모 크기와 동일하게 설정
+    lv_obj_set_flex_flow(mpContent, LV_FLEX_FLOW_ROW);  // 🔥 가로 정렬 (아이콘 왼쪽, 텍스트 오른쪽)
+    lv_obj_set_flex_align(mpContent, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_bg_opa(mpContent, LV_OPA_TRANSP, LV_PART_MAIN); // 🔥 배경 투명하게
 
-    // 🔹 텍스트 추가
-    ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_RIGHT_MID);
+    // 🔹 아이콘 추가 (왼쪽 정렬)
+    extern const lv_img_dsc_t ic_notconnected;        
+    ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(mpContent, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
+
+    // 🔹 텍스트 추가 (오른쪽 정렬)
+    ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(mpContent, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_LEFT_MID);
+    lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelNotConnected, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
 
     // 🔹 버튼 추가
     ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
