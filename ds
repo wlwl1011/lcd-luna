@@ -1,11 +1,58 @@
-const lv_image_dsc_t ic_notconnected = {
-.header.cf = LV_COLOR_FORMAT_RGB565,
-.header.magic = LV_IMAGE_HEADER_MAGIC,
-.header.w = 96,
-.header.h = 96,
-.data_size = 9216 * 2,
-.data = ic_notconnected_map,
-}; 아이콘이 이렇게 정의 되어 있을때, // 🔹 아이콘 추가 (왼쪽 정렬)
-extern const lv_img_dsc_t ic_notconnected;
-ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
-이렇게 쓰면 아이콘이 너무 커. 나는 이미지가 깨지지 말라고 일부러 x4 해서 변환해서 가져온거거든
+void Create_NetworkInfoPage()
+{
+	
+	lv_ui*ui=Ui_GetInstance();
+
+	ui->mpNetWorkInfoPage=calloc(1,sizeof(ui_NetworkInfoPage));
+	if(ui->mpNetWorkInfoPage==NULL)
+	{
+		lv_log("%s\n","Failed to allocate ui->mpNetworkInofPage");
+	}
+	//Create Page Area
+	ui->mpNetWorkInfoPage->mpPageWindowArea = CreatePageArea(ui->mpPageWindowArea);
+
+	//Create Title
+	ui->mpNetWorkInfoPage->mpLayoutTitle = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,TITLE_X_Y_HEIGHT_WIDTH);
+	lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutTitle, ui->mpTopArea, LV_ALIGN_OUT_BOTTOM_MID, 0,0);
+
+	ui->mpNetWorkInfoPage->mpLabelNetworkInfo = CreateTitle(ui->mpNetWorkInfoPage->mpLayoutTitle, TR_TITLE_NETWORK_INFO);
+	lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelNetworkInfo, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);	
+
+	if(ui->isNetworkNotConnected || strcmp(Get_Network_Info()->ip, NETWORK_INFO_NA) == 0)
+	{
+		
+		ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 135, 40);
+
+
+		lv_obj_set_size(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 132, 40); // 🔥 크기 설정
+
+		// 🔹 배경 스타일 적용 (둥근 모서리)
+		lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, lv_color_make(51,51,51), LV_PART_MAIN);
+		lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 50, LV_PART_MAIN); // 🔥 더 둥글게 조정 가능
+		lv_obj_set_style_bg_opa(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_OPA_COVER, LV_PART_MAIN);
+		lv_obj_set_style_border_width(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus,0, LV_PART_MAIN);
+
+		// 🔹 배경을 뒤로 보내기
+		lv_obj_move_background(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus);
+    
+	
+		lv_obj_set_flex_flow(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_FLEX_FLOW_ROW);  // 🔥 가로 정렬 (아이콘 왼쪽, 텍스트 오른쪽)
+		lv_obj_set_flex_align(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+		// 🔹 아이콘 추가 (왼쪽 정렬)
+		extern const lv_img_dsc_t ic_notconnected;        
+		ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
+		// lv_obj_set_size(ui->mpNetWorkInfoPage->mpImgNotConnectedStatus, 24, 24);
+		lv_img_set_zoom(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 64);
+
+		
+		
+
+		// 🔹 텍스트 추가 (오른쪽 정렬)
+		ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_LEFT_MID);
+		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelNotConnected, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+
+		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
+		ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
+
+	} 
