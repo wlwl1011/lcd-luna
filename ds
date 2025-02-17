@@ -4,9 +4,9 @@ lv_obj_t* CreateKeyMatrix(lv_obj_t* pParent, UINT32 ulAlignment, INT16 x, INT16 
 	static lv_style_t style_bg;
 	static lv_style_t style_btn;
 	static lv_style_t style_disabled;
-	static lv_style_t style_focused;
 	static lv_style_t style_checked;
-	 // 🔹 배경 스타일
+
+	// 🔹 배경 스타일
     lv_style_init(&style_bg);
     lv_style_set_pad_all(&style_bg, 0);
     lv_style_set_pad_gap(&style_bg, 0);
@@ -20,9 +20,11 @@ lv_obj_t* CreateKeyMatrix(lv_obj_t* pParent, UINT32 ulAlignment, INT16 x, INT16 
     lv_style_set_border_width(&style_btn, 1);
     lv_style_set_border_opa(&style_btn, 0);
 
-    // 🔹 Disabled(비활성화) 상태 스타일
+    // 🔹 Disabled(비활성화) 상태 스타일 (Dark Blue 강제 적용)
     lv_style_init(&style_disabled);
-    lv_style_set_bg_color(&style_disabled, lv_color_make(COLOR_DARK_BLUE)); // 기존 배경 유지
+    lv_style_set_bg_color(&style_disabled, lv_color_make(COLOR_DARK_BLUE)); // 🔥 강제로 Dark Blue 설정
+    lv_style_set_bg_opa(&style_disabled, LV_OPA_COVER);  // 🔥 배경 불투명도 100% (기본 스타일 덮어쓰기)
+    lv_style_set_border_width(&style_disabled, 0); // 🔥 테두리 제거 (회색 테두리 방지)
     lv_style_set_text_opa(&style_disabled, LV_OPA_40);  // 텍스트 불투명도 40%
     lv_style_set_text_color(&style_disabled, lv_color_make(COLOR_WHITE_RGB)); // 비활성화 상태의 글자색
 
@@ -31,10 +33,8 @@ lv_obj_t* CreateKeyMatrix(lv_obj_t* pParent, UINT32 ulAlignment, INT16 x, INT16 
     lv_style_set_bg_color(&style_checked, lv_color_make(COLOR_WHITE_RGB)); // 선택된 상태의 배경 색상
     lv_style_set_text_color(&style_checked, lv_color_make(COLOR_DARK_BLUE)); // 선택된 상태의 글자색
 
-	 lv_obj_t* btnm = lv_btnmatrix_create(pParent);
+    lv_obj_t* btnm = lv_btnmatrix_create(pParent);
     lv_btnmatrix_set_map(btnm, pBtnData);
-    
-   
 
     if (isScreenWidth) {
         lv_obj_set_size(btnm, SCREEN_WIDTH, 48);
@@ -47,18 +47,23 @@ lv_obj_t* CreateKeyMatrix(lv_obj_t* pParent, UINT32 ulAlignment, INT16 x, INT16 
 
     lv_obj_set_style_text_font(btnm, &KR_FONT_20M, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    // 기본 배경 색상 적용
+    // 🔹 기본 배경 색상 적용
     lv_obj_set_style_bg_color(btnm, lv_color_make(COLOR_DARK_BLUE), LV_PART_ITEMS);
     lv_obj_set_style_text_color(btnm, lv_color_make(COLOR_WHITE_RGB), LV_PART_ITEMS | LV_STATE_DEFAULT); // 기본 텍스트 색상
+
+    // 🔹 스타일 적용
 	lv_obj_add_style(btnm, &style_bg, LV_PART_MAIN);
     lv_obj_add_style(btnm, &style_btn, LV_PART_ITEMS);
-    lv_obj_add_style(btnm, &style_disabled, LV_PART_ITEMS | LV_STATE_DISABLED);
-	 lv_obj_add_style(btnm, &style_checked, LV_PART_ITEMS | LV_STATE_CHECKED);
 
-    // 텍스트 중앙 정렬
+    // 🔥 비활성 상태에서도 배경을 Dark Blue로 강제 적용
+    lv_obj_add_style(btnm, &style_disabled, LV_PART_ITEMS | LV_STATE_DISABLED);
+    lv_obj_add_style(btnm, &style_disabled, LV_PART_MAIN | LV_STATE_DISABLED);
+
+	lv_obj_add_style(btnm, &style_checked, LV_PART_ITEMS | LV_STATE_CHECKED);
+
+    // 🔹 텍스트 중앙 정렬
     lv_obj_set_style_text_align(btnm, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(btnm, ulAlignment, x, y);
-
 
     return btnm;
 }
