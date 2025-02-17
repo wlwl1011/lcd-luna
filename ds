@@ -1,73 +1,103 @@
-lv_obj_t* CreateKeyMatrix(lv_obj_t* pParent, UINT32 ulAlignment, INT16 x, INT16 y, const char** pBtnData, bool isScreenWidth)
+void Create_NetworkInfoPage()
 {
-    // 스타일 선언
-	static lv_style_t style_bg;
-	static lv_style_t style_btn;
-	static lv_style_t style_disabled;
-	static lv_style_t style_checked;
+	
+	lv_ui*ui=Ui_GetInstance();
 
-	// 🔹 배경 스타일
-    lv_style_init(&style_bg);
-    lv_style_set_pad_all(&style_bg, 0);
-    lv_style_set_pad_gap(&style_bg, 0);
-    lv_style_set_clip_corner(&style_bg, true);
-    lv_style_set_radius(&style_bg, LV_RADIUS_CIRCLE);
-    lv_style_set_border_width(&style_bg, 0);
-    lv_style_set_bg_color(&style_bg, lv_color_make(85,106,139));  // 기본 배경색 Dark Blue 설정
-    lv_style_set_bg_opa(&style_bg, LV_OPA_COVER); // 완전히 불투명하게 설정
+	ui->mpNetWorkInfoPage=calloc(1,sizeof(ui_NetworkInfoPage));
+	if(ui->mpNetWorkInfoPage==NULL)
+	{
+		lv_log("%s\n","Failed to allocate ui->mpNetworkInofPage");
+	}
+	//Create Page Area
+	ui->mpNetWorkInfoPage->mpPageWindowArea = CreatePageArea(ui->mpPageWindowArea);
 
-    // 🔹 기본 버튼 스타일
-    lv_style_init(&style_btn);
-    lv_style_set_radius(&style_btn, 0);
-    lv_style_set_border_width(&style_btn, 1);
-    lv_style_set_border_opa(&style_btn, 0);
-    lv_style_set_bg_color(&style_btn, lv_color_make(85,106,139));  // 기본 버튼 배경색도 Dark Blue 유지
-    lv_style_set_text_color(&style_btn, lv_color_make(COLOR_WHITE_RGB));  // 기본 글자색 흰색
+	//Create Title
+	ui->mpNetWorkInfoPage->mpLayoutTitle = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,TITLE_X_Y_HEIGHT_WIDTH);
+	lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutTitle, ui->mpTopArea, LV_ALIGN_OUT_BOTTOM_MID, 0,0);
 
-    // 🔹 Disabled(비활성화) 상태 스타일 (Dark Blue 유지)
-    lv_style_init(&style_disabled);
-    lv_style_set_bg_color(&style_disabled, lv_color_make(85,106,139)); // Dark Blue 강제 적용
-    lv_style_set_bg_opa(&style_disabled, LV_OPA_COVER);  // 배경 불투명도 100% (기본 스타일 덮어쓰기)
-    lv_style_set_border_width(&style_disabled, 0); // 테두리 제거 (회색 테두리 방지)
-    lv_style_set_text_opa(&style_disabled, LV_OPA_40);  // 텍스트 불투명도 40%
-    lv_style_set_text_color(&style_disabled, lv_color_make(COLOR_WHITE_RGB)); // 비활성화 상태의 글자색
+	ui->mpNetWorkInfoPage->mpLabelNetworkInfo = CreateTitle(ui->mpNetWorkInfoPage->mpLayoutTitle, TR_TITLE_NETWORK_INFO);
+	lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelNetworkInfo, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);	
 
-    // 🔹 Checked(선택됨) 상태 스타일
-    lv_style_init(&style_checked);
-    lv_style_set_bg_color(&style_checked, lv_color_make(COLOR_WHITE_RGB)); // 선택된 상태의 배경 색상
-    lv_style_set_text_color(&style_checked, lv_color_make(COLOR_DARK_BLUE)); // 선택된 상태의 글자색
+	if(ui->isNetworkNotConnected)
+	{
+		
+		ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 120, 29);
 
-    lv_obj_t* btnm = lv_btnmatrix_create(pParent);
-    lv_btnmatrix_set_map(btnm, pBtnData);
+		//mpLayoutNetworkStatus layout의 배경 추가 하고 싶음 !!
 
-    if (isScreenWidth) {
-        lv_obj_set_size(btnm, SCREEN_WIDTH, 48);
-    }
+		// 배경 색상 설정
+		lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, lv_color_make(COLOR_WHITE_RGB), LV_PART_MAIN);
 
-    /* 기본 스타일 제거 후 우리가 원하는 스타일 적용 */
-    lv_obj_remove_style_all(btnm);  // 🔥 기본 스타일 제거
-    lv_obj_add_style(btnm, &style_bg, LV_PART_MAIN); // 🔥 Dark Blue를 기본 스타일로 강제 적용
-    lv_obj_add_style(btnm, &style_btn, LV_PART_ITEMS);
+		// 모서리 반경 설정 (예: 10픽셀)
+		lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 10, LV_PART_MAIN);
+    
+		extern const lv_img_dsc_t ic_notconnected;		
+		ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
 
-    /* Allow selecting only one button at a time */
-    lv_btnmatrix_set_btn_ctrl_all(btnm, LV_BTNMATRIX_CTRL_CHECKABLE);
-    lv_btnmatrix_set_one_checked(btnm, true);
-    lv_btnmatrix_set_btn_ctrl(btnm, 0, LV_BTNMATRIX_CTRL_CHECKED);
+		ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_RIGHT_MID);
+		
+		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
+		ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
 
-    lv_obj_set_style_text_font(btnm, &KR_FONT_20M, LV_PART_MAIN | LV_STATE_DEFAULT);
+	} 
+	else
+	{
+		
+		ui->mpNetWorkInfoPage->mpLayoutAddressDetails = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,0,0,280,141);
+		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutAddressDetails, ui->mpNetWorkInfoPage->mpLayoutTitle, LV_ALIGN_OUT_BOTTOM_MID, 0,15);
+		ui->mpNetWorkInfoPage->mpLayoutIP = CreateLayout(ui->mpNetWorkInfoPage->mpLayoutAddressDetails,LV_ALIGN_TOP_MID,0,0,170,26);
 
-    // 🔹 기본 배경 색상 적용 (Dark Blue 강제 적용)
-    lv_obj_set_style_bg_color(btnm, lv_color_make(85,106,139), LV_PART_ITEMS);
-    lv_obj_set_style_text_color(btnm, lv_color_make(COLOR_WHITE_RGB), LV_PART_ITEMS | LV_STATE_DEFAULT); // 기본 텍스트 색상
+		ui->mpNetWorkInfoPage->mpLayoutGW = CreateLayout(ui->mpNetWorkInfoPage->mpLayoutAddressDetails,LV_ALIGN_CENTER,0,2,170,26);
 
-    // 🔹 스타일 적용
-    lv_obj_add_style(btnm, &style_disabled, LV_PART_ITEMS | LV_STATE_DISABLED);
-    lv_obj_add_style(btnm, &style_disabled, LV_PART_MAIN | LV_STATE_DISABLED);
-    lv_obj_add_style(btnm, &style_checked, LV_PART_ITEMS | LV_STATE_CHECKED);
+		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutGW, ui->mpNetWorkInfoPage->mpLayoutIP, LV_ALIGN_OUT_BOTTOM_MID, 0,2);
 
-    // 🔹 텍스트 중앙 정렬
-    lv_obj_set_style_text_align(btnm, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(btnm, ulAlignment, x, y);
+		ui->mpNetWorkInfoPage->mpLabelIP = CreateText(ui->mpNetWorkInfoPage->mpLayoutIP, TR_IP, LV_ALIGN_TOP_LEFT, 0, 0);
+		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabelIP,36);
+		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelIP, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelIP, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    return btnm;
+		ui->mpNetWorkInfoPage->mpLabel_ValueIP = CreateText(ui->mpNetWorkInfoPage->mpLayoutIP, TR_NONE, LV_ALIGN_TOP_LEFT, 0,0);
+		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabel_ValueIP,200);
+		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLabel_ValueIP, ui->mpNetWorkInfoPage->mpLabelIP, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabel_ValueIP, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+		lv_obj_set_style_text_color(ui->mpNetWorkInfoPage->mpLabel_ValueIP,lv_color_make(COLOR_GRAY_RGB),LV_PART_MAIN);
+		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabel_ValueIP, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+		ui->mpNetWorkInfoPage->mpLabelGW = CreateText(ui->mpNetWorkInfoPage->mpLayoutGW, TR_GW, LV_ALIGN_TOP_LEFT, 0, 0);
+		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabelGW, 36);
+		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelGW, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelGW, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+		ui->mpNetWorkInfoPage->mpLabel_ValueGW = CreateText(ui->mpNetWorkInfoPage->mpLayoutGW, TR_NONE, LV_ALIGN_TOP_LEFT, 0, 0);
+		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabel_ValueGW, 200);
+		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLabel_ValueGW, ui->mpNetWorkInfoPage->mpLabelGW, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabel_ValueGW, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+		lv_obj_set_style_text_color(ui->mpNetWorkInfoPage->mpLabel_ValueGW,lv_color_make(COLOR_GRAY_RGB),LV_PART_MAIN);
+		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabel_ValueGW, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+		if (strcmp(Get_Network_Info()->ipv6, NETWORK_INFO_NA) != 0){
+			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueIP,Get_Network_Info()->ipv6);
+			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueGW,Get_Network_Info()->ipv6_gw);
+			lv_label_set_long_mode(ui->mpNetWorkInfoPage->mpLabel_ValueIP, LV_LABEL_LONG_SCROLL_CIRCULAR); 
+			lv_label_set_long_mode(ui->mpNetWorkInfoPage->mpLabel_ValueGW, LV_LABEL_LONG_SCROLL_CIRCULAR);   
+		}else{
+			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueIP,Get_Network_Info()->ip);
+			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueGW,Get_Network_Info()->gw);
+		}
+
+		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
+		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutButtonText,ui->mpNetWorkInfoPage->mpLayoutGW,LV_ALIGN_OUT_BOTTOM_MID,0,25);
+
+		if(ui->mpNetWorkInfoPage->mpLayoutButtonText)
+			// 무선 네트워크에 연결된 경우
+			if(!Get_Network_Info()->is_wired)
+				ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_NETWORK_NOT_SUPPORTED, LV_ALIGN_CENTER, 0, 0);		
+
+			else
+				ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
+
+	}
+	
+
+
 }
