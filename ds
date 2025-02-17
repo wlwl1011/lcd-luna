@@ -1,103 +1,30 @@
-void Create_NetworkInfoPage()
+// 네트워크 상태 UI 생성 부분
+if(ui->isNetworkNotConnected)
 {
-	
-	lv_ui*ui=Ui_GetInstance();
+    // 🔹 네트워크 상태 레이아웃 생성
+    ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 120, 29);
 
-	ui->mpNetWorkInfoPage=calloc(1,sizeof(ui_NetworkInfoPage));
-	if(ui->mpNetWorkInfoPage==NULL)
-	{
-		lv_log("%s\n","Failed to allocate ui->mpNetworkInofPage");
-	}
-	//Create Page Area
-	ui->mpNetWorkInfoPage->mpPageWindowArea = CreatePageArea(ui->mpPageWindowArea);
+    // 🔹 둥근 배경을 위한 별도 컨테이너 생성
+    ui->mpNetWorkInfoPage->mpBgRound = lv_obj_create(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus);
+    lv_obj_set_size(ui->mpNetWorkInfoPage->mpBgRound, 120, 29); // 🔥 크기 설정
+    lv_obj_align(ui->mpNetWorkInfoPage->mpBgRound, LV_ALIGN_CENTER, 0, 0); // 🔥 중앙 정렬
 
-	//Create Title
-	ui->mpNetWorkInfoPage->mpLayoutTitle = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,TITLE_X_Y_HEIGHT_WIDTH);
-	lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutTitle, ui->mpTopArea, LV_ALIGN_OUT_BOTTOM_MID, 0,0);
+    // 🔹 배경 스타일 적용 (둥근 모서리)
+    lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpBgRound, lv_color_make(COLOR_WHITE_RGB), LV_PART_MAIN);
+    lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpBgRound, 15, LV_PART_MAIN); // 🔥 더 둥글게 조정 가능
+    lv_obj_set_style_bg_opa(ui->mpNetWorkInfoPage->mpBgRound, LV_OPA_COVER, LV_PART_MAIN);
 
-	ui->mpNetWorkInfoPage->mpLabelNetworkInfo = CreateTitle(ui->mpNetWorkInfoPage->mpLayoutTitle, TR_TITLE_NETWORK_INFO);
-	lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelNetworkInfo, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);	
+    // 🔹 배경을 뒤로 보내기
+    lv_obj_move_background(ui->mpNetWorkInfoPage->mpBgRound);
 
-	if(ui->isNetworkNotConnected)
-	{
-		
-		ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 120, 29);
+    // 🔹 아이콘 추가
+    extern const lv_img_dsc_t ic_notconnected;        
+    ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
 
-		//mpLayoutNetworkStatus layout의 배경 추가 하고 싶음 !!
+    // 🔹 텍스트 추가
+    ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_RIGHT_MID);
 
-		// 배경 색상 설정
-		lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, lv_color_make(COLOR_WHITE_RGB), LV_PART_MAIN);
-
-		// 모서리 반경 설정 (예: 10픽셀)
-		lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 10, LV_PART_MAIN);
-    
-		extern const lv_img_dsc_t ic_notconnected;		
-		ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
-
-		ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_RIGHT_MID);
-		
-		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
-		ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
-
-	} 
-	else
-	{
-		
-		ui->mpNetWorkInfoPage->mpLayoutAddressDetails = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,0,0,280,141);
-		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutAddressDetails, ui->mpNetWorkInfoPage->mpLayoutTitle, LV_ALIGN_OUT_BOTTOM_MID, 0,15);
-		ui->mpNetWorkInfoPage->mpLayoutIP = CreateLayout(ui->mpNetWorkInfoPage->mpLayoutAddressDetails,LV_ALIGN_TOP_MID,0,0,170,26);
-
-		ui->mpNetWorkInfoPage->mpLayoutGW = CreateLayout(ui->mpNetWorkInfoPage->mpLayoutAddressDetails,LV_ALIGN_CENTER,0,2,170,26);
-
-		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutGW, ui->mpNetWorkInfoPage->mpLayoutIP, LV_ALIGN_OUT_BOTTOM_MID, 0,2);
-
-		ui->mpNetWorkInfoPage->mpLabelIP = CreateText(ui->mpNetWorkInfoPage->mpLayoutIP, TR_IP, LV_ALIGN_TOP_LEFT, 0, 0);
-		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabelIP,36);
-		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelIP, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelIP, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		ui->mpNetWorkInfoPage->mpLabel_ValueIP = CreateText(ui->mpNetWorkInfoPage->mpLayoutIP, TR_NONE, LV_ALIGN_TOP_LEFT, 0,0);
-		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabel_ValueIP,200);
-		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLabel_ValueIP, ui->mpNetWorkInfoPage->mpLabelIP, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
-		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabel_ValueIP, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-		lv_obj_set_style_text_color(ui->mpNetWorkInfoPage->mpLabel_ValueIP,lv_color_make(COLOR_GRAY_RGB),LV_PART_MAIN);
-		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabel_ValueIP, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		ui->mpNetWorkInfoPage->mpLabelGW = CreateText(ui->mpNetWorkInfoPage->mpLayoutGW, TR_GW, LV_ALIGN_TOP_LEFT, 0, 0);
-		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabelGW, 36);
-		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelGW, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelGW, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		ui->mpNetWorkInfoPage->mpLabel_ValueGW = CreateText(ui->mpNetWorkInfoPage->mpLayoutGW, TR_NONE, LV_ALIGN_TOP_LEFT, 0, 0);
-		lv_obj_set_width(ui->mpNetWorkInfoPage->mpLabel_ValueGW, 200);
-		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLabel_ValueGW, ui->mpNetWorkInfoPage->mpLabelGW, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
-		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabel_ValueGW, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-		lv_obj_set_style_text_color(ui->mpNetWorkInfoPage->mpLabel_ValueGW,lv_color_make(COLOR_GRAY_RGB),LV_PART_MAIN);
-		lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabel_ValueGW, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		if (strcmp(Get_Network_Info()->ipv6, NETWORK_INFO_NA) != 0){
-			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueIP,Get_Network_Info()->ipv6);
-			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueGW,Get_Network_Info()->ipv6_gw);
-			lv_label_set_long_mode(ui->mpNetWorkInfoPage->mpLabel_ValueIP, LV_LABEL_LONG_SCROLL_CIRCULAR); 
-			lv_label_set_long_mode(ui->mpNetWorkInfoPage->mpLabel_ValueGW, LV_LABEL_LONG_SCROLL_CIRCULAR);   
-		}else{
-			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueIP,Get_Network_Info()->ip);
-			lv_label_set_text(ui->mpNetWorkInfoPage->mpLabel_ValueGW,Get_Network_Info()->gw);
-		}
-
-		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
-		lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutButtonText,ui->mpNetWorkInfoPage->mpLayoutGW,LV_ALIGN_OUT_BOTTOM_MID,0,25);
-
-		if(ui->mpNetWorkInfoPage->mpLayoutButtonText)
-			// 무선 네트워크에 연결된 경우
-			if(!Get_Network_Info()->is_wired)
-				ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_NETWORK_NOT_SUPPORTED, LV_ALIGN_CENTER, 0, 0);		
-
-			else
-				ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
-
-	}
-	
-
-
+    // 🔹 버튼 추가
+    ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
+    ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);
 }
