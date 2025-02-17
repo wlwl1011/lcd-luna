@@ -1,0 +1,62 @@
+lv_obj_t* CreateKeyMatrix(lv_obj_t* pParent, UINT32 ulAlignment, INT16 x, INT16 y, const char** pBtnData, bool isScreenWidth)
+{
+    
+    static lv_style_t style_bg;
+    static bool Once = true;
+    if (Once) {
+        lv_style_init(&style_bg);
+        lv_style_set_pad_all(&style_bg, 0);
+        lv_style_set_pad_gap(&style_bg, 0);
+        lv_style_set_clip_corner(&style_bg, true);
+        lv_style_set_radius(&style_bg, LV_RADIUS_CIRCLE);
+        lv_style_set_border_width(&style_bg, 0);
+    }
+
+    static lv_style_t style_btn;
+    if (Once) {
+        lv_style_init(&style_btn);
+        lv_style_set_radius(&style_btn, 0);
+        lv_style_set_border_width(&style_btn, 1);
+        lv_style_set_border_opa(&style_btn, 0);
+        
+        Once = false;
+    }
+
+    lv_obj_t* btnm = lv_btnmatrix_create(pParent);
+    lv_btnmatrix_set_map(btnm, pBtnData);
+    lv_obj_add_style(btnm, &style_bg, 0);
+    lv_obj_add_style(btnm, &style_btn, LV_PART_ITEMS);
+    
+    if (isScreenWidth) {
+        lv_obj_set_size(btnm, SCREEN_WIDTH, 48);
+    }
+
+    /*Allow selecting on one number at time*/
+    lv_btnmatrix_set_btn_ctrl_all(btnm, LV_BTNMATRIX_CTRL_CHECKABLE);
+    lv_btnmatrix_set_one_checked(btnm, true);
+    lv_btnmatrix_set_btn_ctrl(btnm, 0, LV_BTNMATRIX_CTRL_CHECKED);
+    lv_obj_set_style_text_font(btnm, &KR_FONT_20M, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+
+    // 버튼 매트릭스의 모든 버튼에 대해 배경 색상 설정
+	lv_obj_set_style_bg_color(btnm, lv_color_make(COLOR_DARK_BLUE), LV_PART_ITEMS);
+	lv_obj_set_style_bg_color(btnm, lv_color_make(COLOR_DARK_BLUE), LV_PART_ITEMS);
+
+    // 초점 상태의 배경 색상 설정 (글자색 및 배경색 치환)
+    lv_obj_set_style_bg_color(btnm, lv_color_make(COLOR_WHITE_RGB), LV_PART_ITEMS | LV_STATE_PRESSED | LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_text_color(btnm, lv_color_make(COLOR_DARK_BLUE), LV_PART_ITEMS | LV_STATE_PRESSED | LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
+
+    // 텍스트 색상에 불투명도 40% 적용
+    lv_color_t text_color = lv_color_make(COLOR_WHITE_RGB);
+    lv_obj_set_style_text_color(btnm, text_color, LV_PART_ITEMS | LV_STATE_DEFAULT); // 기본 텍스트 색상
+    lv_obj_set_style_text_color(btnm, lv_color_make(COLOR_WHITE_RGB), LV_PART_ITEMS | LV_STATE_DISABLED); // 비활성화 상태의 텍스트 색상
+
+    // 체크된 상태의 배경 색상 설정
+    lv_obj_set_style_bg_color(btnm, lv_color_make(COLOR_BLUE_RGB), LV_PART_ITEMS | LV_STATE_CHECKED);
+    
+    lv_obj_set_style_text_align(btnm, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(btnm, ulAlignment, x, y);
+
+    return btnm;
+
+}
