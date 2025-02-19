@@ -1,58 +1,118 @@
-void Create_NetworkInfoPage()
+다음은 **프론트엔드 개발자를 위한 API 명세서**야. UI에서 쉽게 데이터를 처리할 수 있도록 필요한 정보를 정리했어.  
+
+---
+
+# **📌 시스템 상태 진단 API 명세서**
+이 API는 시스템의 CPU, 저장소, USB 사용량 및 네트워크/TMS 연결 상태를 조회하고, 상태를 요약하여 반환한다.
+
+## **1️⃣ 요청 방식**
+- **📌 Method**: `GET`
+- **📌 Endpoint**: `/api/system/status`
+- **📌 Headers**:
+  ```json
+  {
+    "Content-Type": "application/json"
+  }
+  ```
+- **📌 Query Parameters**: 없음  
+
+---
+
+## **2️⃣ 응답 데이터 구조**
+### ✅ **성공 응답 (`200 OK`)**
+```json
 {
-	
-	lv_ui*ui=Ui_GetInstance();
+  "status": "warning",
+  "issues": ["HIGH_CPU", "TMS_DISCONNECTED"],
+  "details": {
+    "cpu_usage": 87.2,
+    "storage": {
+      "total": 500000,
+      "used": 450000,
+      "usage": 90.0
+    },
+    "usb": {
+      "total": 128000,
+      "used": 80000,
+      "usage": 62.5
+    },
+    "network_connected": true,
+    "tms_connected": false
+  }
+}
+```
 
-	ui->mpNetWorkInfoPage=calloc(1,sizeof(ui_NetworkInfoPage));
-	if(ui->mpNetWorkInfoPage==NULL)
-	{
-		lv_log("%s\n","Failed to allocate ui->mpNetworkInofPage");
-	}
-	//Create Page Area
-	ui->mpNetWorkInfoPage->mpPageWindowArea = CreatePageArea(ui->mpPageWindowArea);
+---
 
-	//Create Title
-	ui->mpNetWorkInfoPage->mpLayoutTitle = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea,LV_ALIGN_CENTER,TITLE_X_Y_HEIGHT_WIDTH);
-	lv_obj_align_to(ui->mpNetWorkInfoPage->mpLayoutTitle, ui->mpTopArea, LV_ALIGN_OUT_BOTTOM_MID, 0,0);
+### **📌 응답 필드 설명**
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `status` | `string` | 시스템 전체 상태 (`normal`, `warning`, `critical`) |
+| `issues` | `array<string>` | 현재 발생한 문제들의 코드 리스트 |
+| `details.cpu_usage` | `float` | CPU 사용률 (%) |
+| `details.storage.total` | `integer` | 총 저장 공간 (MB) |
+| `details.storage.used` | `integer` | 사용된 저장 공간 (MB) |
+| `details.storage.usage` | `float` | 저장소 사용률 (%) |
+| `details.usb.total` | `integer` | USB 총 저장 공간 (MB) |
+| `details.usb.used` | `integer` | USB 사용된 공간 (MB) |
+| `details.usb.usage` | `float` | USB 사용률 (%) |
+| `details.network_connected` | `boolean` | 네트워크 연결 여부 |
+| `details.tms_connected` | `boolean` | TMS 연결 여부 |
 
-	ui->mpNetWorkInfoPage->mpLabelNetworkInfo = CreateTitle(ui->mpNetWorkInfoPage->mpLayoutTitle, TR_TITLE_NETWORK_INFO);
-	lv_obj_set_style_text_font(ui->mpNetWorkInfoPage->mpLabelNetworkInfo, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);	
+💡 **스토리지 & USB 단위는 MB** (GB 변환은 `value / 1000` 하면 됨)
 
-	if(ui->isNetworkNotConnected || strcmp(Get_Network_Info()->ip, NETWORK_INFO_NA) == 0)
-	{
-		
-		ui->mpNetWorkInfoPage->mpLayoutNetworkStatus = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, -15, 135, 40);
+---
 
+## **3️⃣ `status` 상태 기준**
+| 상태 | 설명 | UI 처리 예시 |
+|------|------|------|
+| `normal` | 모든 시스템 정상 ✅ | 초록색 아이콘 표시 |
+| `warning` | 일부 문제 감지됨 ⚠️ | 노란색 경고 표시 |
+| `critical` | 심각한 문제 발생 ❌ | 빨간색 경고 표시 & 알림 |
 
-		lv_obj_set_size(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 132, 40); // 🔥 크기 설정
+---
 
-		// 🔹 배경 스타일 적용 (둥근 모서리)
-		lv_obj_set_style_bg_color(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, lv_color_make(51,51,51), LV_PART_MAIN);
-		lv_obj_set_style_radius(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 50, LV_PART_MAIN); // 🔥 더 둥글게 조정 가능
-		lv_obj_set_style_bg_opa(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_OPA_COVER, LV_PART_MAIN);
-		lv_obj_set_style_border_width(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus,0, LV_PART_MAIN);
+## **4️⃣ `issues` 코드 목록**
+> UI에서 **언어별 매핑 가능하도록 코드 값 제공**
+>
+> 예)  
+> ```json
+> { "HIGH_CPU": "CPU 사용률이 높습니다", "LOW_STORAGE": "저장 공간이 부족합니다" }
+> ```
 
-		// 🔹 배경을 뒤로 보내기
-		lv_obj_move_background(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus);
-    
-	
-		lv_obj_set_flex_flow(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_FLEX_FLOW_ROW);  // 🔥 가로 정렬 (아이콘 왼쪽, 텍스트 오른쪽)
-		lv_obj_set_flex_align(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+| 코드 값 | 설명 | 처리 방법 |
+|---------|------|---------|
+| `HIGH_CPU` | CPU 사용률 높음 | UI에서 CPU 사용률 강조 |
+| `LOW_STORAGE` | 저장 공간 부족 | UI에서 저장소 경고 표시 |
+| `HIGH_USB_USAGE` | USB 저장 공간 사용률 높음 | UI에서 USB 사용량 강조 |
+| `NETWORK_DISCONNECTED` | 네트워크 연결 끊김 | UI에서 네트워크 경고 표시 |
+| `TMS_DISCONNECTED` | TMS 연결 끊김 | UI에서 "서버 연결 오류" 메시지 표시 |
 
-		// 🔹 아이콘 추가 (왼쪽 정렬)
-		extern const lv_img_dsc_t ic_notconnected;        
-		ui->mpNetWorkInfoPage->mpImgNotConnectedStatus = CreateImage(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, &ic_notconnected, LV_ALIGN_LEFT_MID, 0, 0);
-		// lv_obj_set_size(ui->mpNetWorkInfoPage->mpImgNotConnectedStatus, 24, 24);
-		lv_img_set_zoom(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, 64);
+---
 
-		
-		
+## **5️⃣ 에러 응답**
+### ❌ **서버 에러 (`500 Internal Server Error`)**
+```json
+{
+  "error": "Internal Server Error",
+  "message": "An unexpected error occurred."
+}
+```
+### ❌ **잘못된 요청 (`400 Bad Request`)**
+```json
+{
+  "error": "Bad Request",
+  "message": "Invalid request parameters."
+}
+```
 
-		// 🔹 텍스트 추가 (오른쪽 정렬)
-		ui->mpNetWorkInfoPage->mpLabelNotConnected = CreateOButtonLabel(ui->mpNetWorkInfoPage->mpLayoutNetworkStatus, TR_NETWORK_NOT_CONNECTED, LV_ALIGN_LEFT_MID);
-		lv_obj_set_style_text_align(ui->mpNetWorkInfoPage->mpLabelNotConnected, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+---
 
-		ui->mpNetWorkInfoPage->mpLayoutButtonText = CreateLayout(ui->mpNetWorkInfoPage->mpPageWindowArea, LV_ALIGN_BOTTOM_MID, 0, 0, 280, 65);
-		ui->mpNetWorkInfoPage->mpButtonText = CreateImageText(ui->mpNetWorkInfoPage->mpLayoutButtonText, TR_O_PRESS_NETWORK_SETUP, LV_ALIGN_CENTER, 0, 0);		
+## **✅ 프론트엔드 개발 시 고려할 점**
+1. **언어별 UI 대응 가능하도록 `issues`는 코드 값으로 제공** → UI에서 번역 처리  
+2. **스토리지 & USB 값은 `MB 단위`로 제공** → 필요 시 GB 변환 (`value / 1000`)  
+3. **`status` 값으로 전체 시스템 상태 표시** (예: `warning` → 노란색, `critical` → 빨간색)  
+4. **`issues` 항목이 비어 있으면 정상 상태** → `status = normal`이면 초록색 UI  
+5. **연결 상태 (`network_connected`, `tms_connected`)는 `true/false`로 제공** → Boolean 값 바로 사용  
 
-	} 
+이렇게 하면 **프론트엔드에서 손쉽게 UI 개발**할 수 있을 거야! 🚀
