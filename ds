@@ -1,118 +1,152 @@
-다음은 **프론트엔드 개발자를 위한 API 명세서**야. UI에서 쉽게 데이터를 처리할 수 있도록 필요한 정보를 정리했어.  
+오케이! `core`랑 `custom`으로 나누지 않고 **단순하고 직관적인 구조**로 하고 싶다면, **모든 데이터를 하나의 루트 레벨에서 관리**하면 돼.  
+➡ 이 방식이 **유지보수도 쉽고**, **다른 서비스에서도 재사용하기 좋아**.  
 
 ---
 
-# **📌 시스템 상태 진단 API 명세서**
-이 API는 시스템의 CPU, 저장소, USB 사용량 및 네트워크/TMS 연결 상태를 조회하고, 상태를 요약하여 반환한다.
-
-## **1️⃣ 요청 방식**
-- **📌 Method**: `GET`
-- **📌 Endpoint**: `/api/system/status`
-- **📌 Headers**:
-  ```json
-  {
-    "Content-Type": "application/json"
-  }
-  ```
-- **📌 Query Parameters**: 없음  
-
----
-
-## **2️⃣ 응답 데이터 구조**
-### ✅ **성공 응답 (`200 OK`)**
+## **📌 개선된 JSON 구조 (구분 없이 단순화)**
 ```json
 {
+  "timestamp": "2025-02-19T12:00:00Z",
   "status": "warning",
   "issues": ["HIGH_CPU", "TMS_DISCONNECTED"],
-  "details": {
-    "cpu_usage": 87.2,
-    "storage": {
-      "total": 500000,
-      "used": 450000,
-      "usage": 90.0
-    },
-    "usb": {
-      "total": 128000,
-      "used": 80000,
-      "usage": 62.5
-    },
-    "network_connected": true,
-    "tms_connected": false
-  }
+  "cpu_usage": 87.2,
+  "storage": {
+    "total": 500000,
+    "used": 450000,
+    "usage": 90.0
+  },
+  "usb": {
+    "connected": true,
+    "total": 128000,
+    "used": 80000,
+    "usage": 62.5
+  },
+  "network_connected": true,
+  "tms_connected": false
 }
 ```
 
----
-
-### **📌 응답 필드 설명**
-| 필드 | 타입 | 설명 |
-|------|------|------|
-| `status` | `string` | 시스템 전체 상태 (`normal`, `warning`, `critical`) |
-| `issues` | `array<string>` | 현재 발생한 문제들의 코드 리스트 |
-| `details.cpu_usage` | `float` | CPU 사용률 (%) |
-| `details.storage.total` | `integer` | 총 저장 공간 (MB) |
-| `details.storage.used` | `integer` | 사용된 저장 공간 (MB) |
-| `details.storage.usage` | `float` | 저장소 사용률 (%) |
-| `details.usb.total` | `integer` | USB 총 저장 공간 (MB) |
-| `details.usb.used` | `integer` | USB 사용된 공간 (MB) |
-| `details.usb.usage` | `float` | USB 사용률 (%) |
-| `details.network_connected` | `boolean` | 네트워크 연결 여부 |
-| `details.tms_connected` | `boolean` | TMS 연결 여부 |
-
-💡 **스토리지 & USB 단위는 MB** (GB 변환은 `value / 1000` 하면 됨)
-
----
-
-## **3️⃣ `status` 상태 기준**
-| 상태 | 설명 | UI 처리 예시 |
-|------|------|------|
-| `normal` | 모든 시스템 정상 ✅ | 초록색 아이콘 표시 |
-| `warning` | 일부 문제 감지됨 ⚠️ | 노란색 경고 표시 |
-| `critical` | 심각한 문제 발생 ❌ | 빨간색 경고 표시 & 알림 |
-
----
-
-## **4️⃣ `issues` 코드 목록**
-> UI에서 **언어별 매핑 가능하도록 코드 값 제공**
->
-> 예)  
-> ```json
-> { "HIGH_CPU": "CPU 사용률이 높습니다", "LOW_STORAGE": "저장 공간이 부족합니다" }
-> ```
-
-| 코드 값 | 설명 | 처리 방법 |
-|---------|------|---------|
-| `HIGH_CPU` | CPU 사용률 높음 | UI에서 CPU 사용률 강조 |
-| `LOW_STORAGE` | 저장 공간 부족 | UI에서 저장소 경고 표시 |
-| `HIGH_USB_USAGE` | USB 저장 공간 사용률 높음 | UI에서 USB 사용량 강조 |
-| `NETWORK_DISCONNECTED` | 네트워크 연결 끊김 | UI에서 네트워크 경고 표시 |
-| `TMS_DISCONNECTED` | TMS 연결 끊김 | UI에서 "서버 연결 오류" 메시지 표시 |
-
----
-
-## **5️⃣ 에러 응답**
-### ❌ **서버 에러 (`500 Internal Server Error`)**
+### ✅ **USB 미연결 상태 예시**
 ```json
 {
-  "error": "Internal Server Error",
-  "message": "An unexpected error occurred."
-}
-```
-### ❌ **잘못된 요청 (`400 Bad Request`)**
-```json
-{
-  "error": "Bad Request",
-  "message": "Invalid request parameters."
+  "timestamp": "2025-02-19T12:00:00Z",
+  "status": "normal",
+  "issues": [],
+  "cpu_usage": 55.3,
+  "storage": {
+    "total": 500000,
+    "used": 200000,
+    "usage": 40.0
+  },
+  "usb": {
+    "connected": false
+  },
+  "network_connected": true,
+  "tms_connected": true
 }
 ```
 
 ---
 
-## **✅ 프론트엔드 개발 시 고려할 점**
-1. **언어별 UI 대응 가능하도록 `issues`는 코드 값으로 제공** → UI에서 번역 처리  
-2. **스토리지 & USB 값은 `MB 단위`로 제공** → 필요 시 GB 변환 (`value / 1000`)  
-3. **`status` 값으로 전체 시스템 상태 표시** (예: `warning` → 노란색, `critical` → 빨간색)  
-4. **`issues` 항목이 비어 있으면 정상 상태** → `status = normal`이면 초록색 UI  
-5. **연결 상태 (`network_connected`, `tms_connected`)는 `true/false`로 제공** → Boolean 값 바로 사용  
+## **📌 Rust 구조체 정의 (단순화 버전)**
+```rust
+use serde::{Serialize, Deserialize};
 
-이렇게 하면 **프론트엔드에서 손쉽게 UI 개발**할 수 있을 거야! 🚀
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SystemStatus {
+    pub timestamp: String,               // ISO 8601 형식 ("2025-02-19T12:00:00Z")
+    pub status: String,                  // "normal" | "warning" | "critical"
+    pub issues: Vec<String>,              // ["HIGH_CPU", "TMS_DISCONNECTED"]
+    pub cpu_usage: f32,                  // CPU 사용률 (%)
+    pub storage: StorageInfo,             // 저장소 정보
+    pub usb: UsbStatus,                   // USB 정보
+    pub network_connected: bool,          // 네트워크 연결 여부
+    pub tms_connected: bool               // TMS 연결 여부
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StorageInfo {
+    pub total: u64,                      // 총 저장 공간 (MB)
+    pub used: u64,                       // 사용된 저장 공간 (MB)
+    pub usage: f32                       // 저장소 사용률 (%)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UsbStatus {
+    pub connected: bool,                 // USB 연결 여부
+    pub total: Option<u64>,               // 총 저장 공간 (MB)
+    pub used: Option<u64>,                // 사용된 저장 공간 (MB)
+    pub usage: Option<f32>                // USB 사용률 (%)
+}
+```
+
+---
+
+## **📌 Rust에서 JSON 변환 예제**
+### **✅ 1. JSON 변환 (Serialize)**
+```rust
+use serde_json;
+
+fn main() {
+    let system_status = SystemStatus {
+        timestamp: "2025-02-19T12:00:00Z".to_string(),
+        status: "warning".to_string(),
+        issues: vec!["HIGH_CPU".to_string(), "TMS_DISCONNECTED".to_string()],
+        cpu_usage: 87.2,
+        storage: StorageInfo { total: 500000, used: 450000, usage: 90.0 },
+        usb: UsbStatus {
+            connected: true,
+            total: Some(128000),
+            used: Some(80000),
+            usage: Some(62.5)
+        },
+        network_connected: true,
+        tms_connected: false
+    };
+
+    let json_output = serde_json::to_string_pretty(&system_status).unwrap();
+    println!("{}", json_output);
+}
+```
+
+---
+
+## **📌 설명**
+1. **구조 단순화**  
+   - `core`, `custom` 구분 없이 **한 레벨**에서 모든 데이터 관리  
+   - JSON 데이터가 **평탄(flat)**하게 구성돼서 UI 개발도 쉬워짐  
+
+2. **USB 연결 여부 (`connected`)**  
+   - `connected: true` → `total`, `used`, `usage` 필드 포함  
+   - `connected: false` → `total`, `used`, `usage`는 `null` (또는 생략)  
+
+3. **Option<T> 사용**  
+   - Rust에선 `Option<T>` 타입을 사용해 연결 여부에 따라 **값을 넣거나 제거**  
+   - JSON에선 `null` 또는 **필드 자체 생략** 가능  
+
+---
+
+## **✅ UI 처리 예시**
+- `usb.connected`가 `false`일 때:  
+  - **USB 정보 숨기기** 또는 **"연결되지 않음"** 표시  
+- `usb.connected`가 `true`일 때:  
+  - `usb.total`, `usb.used`, `usb.usage`를 표시  
+
+---
+
+## **📌 이 구조의 장점**
+1. **단순하고 직관적인 구조**  
+   - `core`, `custom` 구분 없이 **한 번에 파악 가능**  
+2. **확장성과 재사용성**  
+   - 다른 서비스에서도 필요한 정보만 가져다 쓰기 쉬움  
+3. **연결 여부에 따라 동적으로 데이터 제공**  
+   - `connected: false`일 때는 USB 필드가 비어 있음  
+4. **Rust의 타입 안정성 유지**  
+   - `Option<T>`로 JSON `null` 값과 호환  
+
+---
+
+## **📌 결론: 이렇게 하면?**
+✔ **구조가 단순해서 유지보수와 개발이 쉬움!**  
+✔ **다른 서비스에서도 그대로 가져다 쓰기 좋음!**  
+✔ **Rust의 타입 안정성과 JSON의 유연성을 모두 확보!** 🚀
