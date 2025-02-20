@@ -1,152 +1,94 @@
-오케이! `core`랑 `custom`으로 나누지 않고 **단순하고 직관적인 구조**로 하고 싶다면, **모든 데이터를 하나의 루트 레벨에서 관리**하면 돼.  
-➡ 이 방식이 **유지보수도 쉽고**, **다른 서비스에서도 재사용하기 좋아**.  
-
----
-
-## **📌 개선된 JSON 구조 (구분 없이 단순화)**
-```json
 {
-  "timestamp": "2025-02-19T12:00:00Z",
-  "status": "warning",
-  "issues": ["HIGH_CPU", "TMS_DISCONNECTED"],
-  "cpu_usage": 87.2,
-  "storage": {
-    "total": 500000,
-    "used": 450000,
-    "usage": 90.0
-  },
-  "usb": {
-    "connected": true,
-    "total": 128000,
-    "used": 80000,
-    "usage": 62.5
-  },
-  "network_connected": true,
-  "tms_connected": false
-}
-```
-
-### ✅ **USB 미연결 상태 예시**
-```json
-{
-  "timestamp": "2025-02-19T12:00:00Z",
-  "status": "normal",
-  "issues": [],
-  "cpu_usage": 55.3,
-  "storage": {
-    "total": 500000,
-    "used": 200000,
-    "usage": 40.0
-  },
-  "usb": {
-    "connected": false
-  },
-  "network_connected": true,
-  "tms_connected": true
-}
-```
-
----
-
-## **📌 Rust 구조체 정의 (단순화 버전)**
-```rust
-use serde::{Serialize, Deserialize};
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SystemStatus {
-    pub timestamp: String,               // ISO 8601 형식 ("2025-02-19T12:00:00Z")
-    pub status: String,                  // "normal" | "warning" | "critical"
-    pub issues: Vec<String>,              // ["HIGH_CPU", "TMS_DISCONNECTED"]
-    pub cpu_usage: f32,                  // CPU 사용률 (%)
-    pub storage: StorageInfo,             // 저장소 정보
-    pub usb: UsbStatus,                   // USB 정보
-    pub network_connected: bool,          // 네트워크 연결 여부
-    pub tms_connected: bool               // TMS 연결 여부
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct StorageInfo {
-    pub total: u64,                      // 총 저장 공간 (MB)
-    pub used: u64,                       // 사용된 저장 공간 (MB)
-    pub usage: f32                       // 저장소 사용률 (%)
+    "status": "ok",
+    "data": [
+        {
+            "apps": [
+                {
+                    "failCount": 0,
+                    "items": [
+                        {
+                            "comment": "",
+                            "name": "cpu_usage_fatal",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        },
+                        {
+                            "comment": "",
+                            "name": "cpu_usage_warning",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        },
+                        {
+                            "comment": "",
+                            "name": "memory_usage_fatal",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        },
+                        {
+                            "comment": "",
+                            "name": "memory_usage_warning",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        },
+                        {
+                            "comment": "",
+                            "name": "storage_usage_fatal",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        },
+                        {
+                            "comment": "",
+                            "name": "storage_usage_warning",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        },
+                        {
+                            "comment": "",
+                            "name": "connection",
+                            "publishedTime": 1740095730,
+                            "result": "pass"
+                        }
+                    ],
+                    "name": "system",
+                    "passCount": 7,
+                    "publishedTime": 1740095730
+                }
+            ],
+            "publishedTime": 1739925174
+        }
+    ]
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct UsbStatus {
-    pub connected: bool,                 // USB 연결 여부
-    pub total: Option<u64>,               // 총 저장 공간 (MB)
-    pub used: Option<u64>,                // 사용된 저장 공간 (MB)
-    pub usage: Option<f32>                // USB 사용률 (%)
+// 진단 결과 리포트 조회
+pub(crate) fn get_report(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "reports" / i64)
+        .and(warp::get())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::get_report)
 }
-```
 
----
+mod innner {
 
-## **📌 Rust에서 JSON 변환 예제**
-### **✅ 1. JSON 변환 (Serialize)**
-```rust
-use serde_json;
+    pub async fn get_report(
+        id: i64,
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
 
-fn main() {
-    let system_status = SystemStatus {
-        timestamp: "2025-02-19T12:00:00Z".to_string(),
-        status: "warning".to_string(),
-        issues: vec!["HIGH_CPU".to_string(), "TMS_DISCONNECTED".to_string()],
-        cpu_usage: 87.2,
-        storage: StorageInfo { total: 500000, used: 450000, usage: 90.0 },
-        usb: UsbStatus {
-            connected: true,
-            total: Some(128000),
-            used: Some(80000),
-            usage: Some(62.5)
-        },
-        network_connected: true,
-        tms_connected: false
-    };
+        info!("get_report");
 
-    let json_output = serde_json::to_string_pretty(&system_status).unwrap();
-    println!("{}", json_output);
+        let report = match diagnosis::get_report(id).await {
+            Ok(report) => report,
+            Err(e) => {
+                error!("get_report failed: {}", e);
+                return Ok(Response::err("get_report failed".to_string()));
+            }
+        };
+
+        Ok(Response::ok_with_data(json!(report)))
+    }
 }
-```
-
----
-
-## **📌 설명**
-1. **구조 단순화**  
-   - `core`, `custom` 구분 없이 **한 레벨**에서 모든 데이터 관리  
-   - JSON 데이터가 **평탄(flat)**하게 구성돼서 UI 개발도 쉬워짐  
-
-2. **USB 연결 여부 (`connected`)**  
-   - `connected: true` → `total`, `used`, `usage` 필드 포함  
-   - `connected: false` → `total`, `used`, `usage`는 `null` (또는 생략)  
-
-3. **Option<T> 사용**  
-   - Rust에선 `Option<T>` 타입을 사용해 연결 여부에 따라 **값을 넣거나 제거**  
-   - JSON에선 `null` 또는 **필드 자체 생략** 가능  
-
----
-
-## **✅ UI 처리 예시**
-- `usb.connected`가 `false`일 때:  
-  - **USB 정보 숨기기** 또는 **"연결되지 않음"** 표시  
-- `usb.connected`가 `true`일 때:  
-  - `usb.total`, `usb.used`, `usb.usage`를 표시  
-
----
-
-## **📌 이 구조의 장점**
-1. **단순하고 직관적인 구조**  
-   - `core`, `custom` 구분 없이 **한 번에 파악 가능**  
-2. **확장성과 재사용성**  
-   - 다른 서비스에서도 필요한 정보만 가져다 쓰기 쉬움  
-3. **연결 여부에 따라 동적으로 데이터 제공**  
-   - `connected: false`일 때는 USB 필드가 비어 있음  
-4. **Rust의 타입 안정성 유지**  
-   - `Option<T>`로 JSON `null` 값과 호환  
-
----
-
-## **📌 결론: 이렇게 하면?**
-✔ **구조가 단순해서 유지보수와 개발이 쉬움!**  
-✔ **다른 서비스에서도 그대로 가져다 쓰기 좋음!**  
-✔ **Rust의 타입 안정성과 JSON의 유연성을 모두 확보!** 🚀
