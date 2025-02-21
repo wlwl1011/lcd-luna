@@ -1,94 +1,92 @@
-{
-    "status": "ok",
-    "data": [
-        {
-            "apps": [
-                {
-                    "failCount": 0,
-                    "items": [
-                        {
-                            "comment": "",
-                            "name": "cpu_usage_fatal",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        },
-                        {
-                            "comment": "",
-                            "name": "cpu_usage_warning",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        },
-                        {
-                            "comment": "",
-                            "name": "memory_usage_fatal",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        },
-                        {
-                            "comment": "",
-                            "name": "memory_usage_warning",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        },
-                        {
-                            "comment": "",
-                            "name": "storage_usage_fatal",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        },
-                        {
-                            "comment": "",
-                            "name": "storage_usage_warning",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        },
-                        {
-                            "comment": "",
-                            "name": "connection",
-                            "publishedTime": 1740095730,
-                            "result": "pass"
-                        }
-                    ],
-                    "name": "system",
-                    "passCount": 7,
-                    "publishedTime": 1740095730
-                }
-            ],
-            "publishedTime": 1739925174
+use serde_json::{json, Value};
+
+async fn transform_report(id: i64) -> Result<impl warp::Reply, warp::Rejection> {
+    // 1. 기존 데이터를 가져옴 (그대로 JSON 반환)
+    let report = match diagnosis::get_report(id).await {
+        Ok(report) => report,
+        Err(e) => {
+            error!("get_report failed: {}", e);
+            return Ok(warp::reply::json(&json!({
+                "error": "get_report failed"
+            })));
         }
-    ]
-}
+    };
 
-// 진단 결과 리포트 조회
-pub(crate) fn get_report(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis" / "reports" / i64)
-        .and(warp::get())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::get_report)
-}
+    // 2. JSON 파싱 (`serde_json::Value` 타입)
+    let report_json: Value = serde_json::from_value(report).unwrap();
 
-mod innner {
+    // 3. 데이터 가공 및 추출
+    let mut cpu_usage = None;
+    let mut memory_usage = None;
+    let mut storage = None;
+    let mut usb_connected = false;
+    let mut network_connected = false;
+    let mut tms_connected = false;
+    let mut issues = Vec::new();
+    let mut status = "normal";
 
-    pub async fn get_report(
-        id: i64,
-        _token: Option<String>,
-    ) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("get_report");
-
-        let report = match diagnosis::get_report(id).await {
-            Ok(report) => report,
-            Err(e) => {
-                error!("get_report failed: {}", e);
-                return Ok(Response::err("get_report failed".to_string()));
+    // 4. 필요한 데이터 추출 (기존 JSON 구조 탐색)
+    if let Some(data) = report_json["data"].as_array() {
+        for app in data.iter().flat_map(|d| d["apps"].as_array().unwrap()) {
+            for item in app["items"].as_array().unwrap() {
+                match item["name"].as_str().unwrap() {
+                    "cpu_usage_fatal" | "cpu_usage_warning" => {
+                        cpu_usage = Some(87.2); // TODO: 실제 데이터로 매핑
+                        if item["result"].as_str().unwrap() != "pass" {
+                            issues.push("HIGH_CPU");
+                            status = "warning";
+                        }
+                    }
+                    "memory_usage_fatal" | "memory_usage_warning" => {
+                        memory_usage = Some(74.5); // TODO: 실제 데이터로 매핑
+                        if item["result"].as_str().unwrap() != "pass" {
+                            issues.push("HIGH_MEMORY");
+                            status = "warning";
+                        }
+                    }
+                    "storage_usage_fatal" | "storage_usage_warning" => {
+                        storage = Some(json!({
+                            "total": 500000,
+                            "used": 450000,
+                            "usage": 90.0
+                        }));
+                        if item["result"].as_str().unwrap() != "pass" {
+                            issues.push("LOW_STORAGE");
+                            status = "warning";
+                        }
+                    }
+                    "connection" => {
+                        network_connected = item["result"].as_str().unwrap() == "pass";
+                    }
+                    _ => {}
+                }
             }
-        };
-
-        Ok(Response::ok_with_data(json!(report)))
+        }
     }
+
+    // 5. USB 연결 여부 확인 (예시)
+    if cpu_usage.is_some() && memory_usage.is_some() {
+        usb_connected = true;
+    }
+
+    // 6. 최종 JSON 구조체 생성
+    let new_response = json!({
+        "timestamp": "2025-02-19T12:00:00Z",  // TODO: 실제 publishedTime으로 설정
+        "status": status,
+        "issues": issues,
+        "cpu_usage": cpu_usage,
+        "memory_usage": memory_usage,
+        "storage": storage,
+        "usb": {
+            "connected": usb_connected,
+            "total": if usb_connected { Some(128000) } else { None },
+            "used": if usb_connected { Some(80000) } else { None },
+            "usage": if usb_connected { Some(62.5) } else { None }
+        },
+        "network_connected": network_connected,
+        "tms_connected": tms_connected
+    });
+
+    // 7. JSON 응답으로 반환
+    Ok(warp::reply::json(&new_response))
 }
