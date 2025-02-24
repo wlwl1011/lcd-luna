@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use sysinfo::{System, SystemExt, DiskExt, ProcessorExt};
 
 async fn transform_report(id: i64) -> Result<impl warp::Reply, warp::Rejection> {
     // 1. 기존 데이터를 가져옴 (그대로 JSON 반환)
@@ -15,57 +16,63 @@ async fn transform_report(id: i64) -> Result<impl warp::Reply, warp::Rejection> 
     // 2. JSON 파싱 (`serde_json::Value` 타입)
     let report_json: Value = serde_json::from_value(report).unwrap();
 
-    // 3. 필요한 데이터 추출
-    let mut cpu_usage = None;
-    let mut memory_usage = None;
-    let mut storage = None;
-    let mut usb_connected = false;
-    let mut network_connected = false;
-    let mut tms_connected = false;
+    // 3. sysinfo로 시스템 정보 가져오기
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    // 4. CPU 사용량 계산
+    let cpu_usage = sys.global_processor_info().cpu_usage();
+
+    // 5. 메모리 사용량 계산
+    let total_memory = sys.total_memory();
+    let used_memory = sys.used_memory();
+    let memory_usage = (used_memory as f32 / total_memory as f32) * 100.0;
+
+    // 6. 저장소 사용량 계산
+    let mut total_space = 0;
+    let mut used_space = 0;
+    for disk in sys.disks() {
+        total_space += disk.total_space();
+        used_space += disk.total_space() - disk.available_space();
+    }
+    let storage_usage = (used_space as f32 / total_space as f32) * 100.0;
+    let storage = StorageInfo {
+        total: total_space,
+        used: used_space,
+        usage: storage_usage
+    };
+
+    // 7. USB 연결 여부 확인 (직접 탐색)
+    let usb_connected = sys.disks().iter().any(|disk| {
+        disk.name().to_str().unwrap_or("").contains("usb")
+    });
+
+    // 8. USB 정보 설정 (연결 여부에 따라)
+    let usb = UsbStatus {
+        connected: usb_connected,
+        total: if usb_connected { Some(128000) } else { None },
+        used: if usb_connected { Some(80000) } else { None },
+        usage: if usb_connected { Some(62.5) } else { None }
+    };
+
+    // 9. 이슈 및 상태 설정
     let mut issues = Vec::new();
     let mut status = "normal".to_string();
 
-    // 4. 데이터 가공 및 매핑
-    if let Some(data) = report_json["data"].as_array() {
-        for app in data.iter().flat_map(|d| d["apps"].as_array().unwrap()) {
-            for item in app["items"].as_array().unwrap() {
-                match item["name"].as_str().unwrap() {
-                    "cpu_usage_fatal" | "cpu_usage_warning" => {
-                        cpu_usage = Some(87.2); // TODO: 실제 데이터로 매핑
-                        if item["result"].as_str().unwrap() != "pass" {
-                            issues.push("HIGH_CPU".to_string());
-                            status = "warning".to_string();
-                        }
-                    }
-                    "memory_usage_fatal" | "memory_usage_warning" => {
-                        memory_usage = Some(74.5); // TODO: 실제 데이터로 매핑
-                        if item["result"].as_str().unwrap() != "pass" {
-                            issues.push("HIGH_MEMORY".to_string());
-                            status = "warning".to_string();
-                        }
-                    }
-                    "storage_usage_fatal" | "storage_usage_warning" => {
-                        storage = Some(StorageInfo { total: 500000, used: 450000, usage: 90.0 });
-                        if item["result"].as_str().unwrap() != "pass" {
-                            issues.push("LOW_STORAGE".to_string());
-                            status = "warning".to_string();
-                        }
-                    }
-                    "connection" => {
-                        network_connected = item["result"].as_str().unwrap() == "pass";
-                    }
-                    _ => {}
-                }
-            }
-        }
+    if cpu_usage > 80.0 {
+        issues.push("HIGH_CPU".to_string());
+        status = "warning".to_string();
+    }
+    if memory_usage > 80.0 {
+        issues.push("HIGH_MEMORY".to_string());
+        status = "warning".to_string();
+    }
+    if storage_usage > 90.0 {
+        issues.push("LOW_STORAGE".to_string());
+        status = "warning".to_string();
     }
 
-    // 5. USB 연결 여부 확인
-    if cpu_usage.is_some() && memory_usage.is_some() {
-        usb_connected = true;
-    }
-
-    // 6. 새로운 응답 구조체 생성
+    // 10. 새로운 응답 구조체 생성
     let new_response = NewResponse {
         timestamp: "2025-02-19T12:00:00Z".to_string(),  // TODO: 실제 publishedTime으로 설정
         status,
@@ -73,17 +80,12 @@ async fn transform_report(id: i64) -> Result<impl warp::Reply, warp::Rejection> 
         cpu_usage,
         memory_usage,
         storage,
-        usb: UsbStatus {
-            connected: usb_connected,
-            total: if usb_connected { Some(128000) } else { None },
-            used: if usb_connected { Some(80000) } else { None },
-            usage: if usb_connected { Some(62.5) } else { None }
-        },
-        network_connected,
-        tms_connected,
+        usb,
+        network_connected: sys.networks().len() > 0, // 네트워크 연결 여부
+        tms_connected: false // TMS 연결 여부는 별도 확인 필요
     };
 
-    // 7. JSON 응답으로 변환 및 반환
+    // 11. JSON 응답으로 변환 및 반환
     let json_output = serde_json::to_string_pretty(&new_response).unwrap();
     Ok(warp::reply::json(&json!(json_output)))
 }
