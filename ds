@@ -1,148 +1,146 @@
-use serde_json::json;
-use sysinfo::{System, SystemExt, DiskExt, ProcessorExt};
+  pub async fn get_latest_report(
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
 
-// status 우선순위 비교 함수
-fn compare_status(current: &str, new: &str) -> String {
-    match (current, new) {
-        ("critical", _) | (_, "critical") => "critical".to_string(),
-        ("warning", _) | (_, "warning") => "warning".to_string(),
-        _ => "normal".to_string(),
-    }
-}
+        info!("get_latest_report");
+        
+        // 1. 진단앱 결과 데이터 가져오기 (Vec<Report> 타입)
+        let report = match diagnosis::get_latest_report().await {
+            Ok(report) => report,
+            Err(e) => {
+                error!("get_latest_report failed: {}", e);
+                return Ok(Response::err("get_latest_report failed".to_string()));
+            }
+        };
 
-pub async fn get_reports(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
-    // 1. 기존 데이터 가져오기 (Vec<Report> 타입)
-    let reports = match diagnosis::get_reports().await {
-        Ok(reports) => reports,  // ✅ Vec<Report> 그대로 사용
-        Err(e) => {
-            error!("get_reports failed: {}", e);
-            return Ok(warp::reply::json(&json!({
-                "error": "get_reports failed"
-            })));
-        }
-    };
+        // 2. sysinfo로 실시간 시스템 정보 가져오기
+        let mut sys = System::new_all();
+        sys.refresh_all();
 
-    // 2. sysinfo로 실시간 시스템 정보 가져오기
-    let mut sys = System::new_all();
-    sys.refresh_all();
+         // 3. 실시간 사용률 계산 (sysinfo에서 직접 가져옴)
 
-    // 3. 실시간 사용률 계산 (sysinfo에서 직접 가져옴)
-    let cpu_usage_real = sys.global_processor_info().cpu_usage();
-    let total_memory = sys.total_memory();
-    let used_memory = sys.used_memory();
-    let memory_usage_real = (used_memory as f32 / total_memory as f32) * 100.0;
+        // CPU 사용률 계산  
+        let cpu_count = sys.cpus().len();
 
-    let mut total_space = 0;
-    let mut used_space = 0;
-    for disk in sys.disks() {
-        total_space += disk.total_space();
-        used_space += disk.total_space() - disk.available_space();
-    }
-    let storage_usage_real = (used_space as f32 / total_space as f32) * 100.0;
+        // CPU 사용량을 측정하기 위해 잠시 대기
+        thread::sleep(Duration::from_secs(1)); // 1초 대기
 
-    // USB 사용량 계산
-    let mut usb_total = 0;
-    let mut usb_used = 0;
-    let mut usb_connected = false;
-    for disk in sys.disks() {
-        let disk_name = disk.name().to_str().unwrap_or("").to_lowercase();
-        if disk_name.contains("usb") {
-            usb_total += disk.total_space();
-            usb_used += disk.total_space() - disk.available_space();
-            usb_connected = true;
-        }
-    }
-    let usb_usage_real = if usb_total > 0 {
-        (usb_used as f32 / usb_total as f32) * 100.0
-    } else {
-        0.0
-    };
-    let usb = UsbStatus {
-        connected: usb_connected,
-        total: if usb_connected { Some(usb_total) } else { None },
-        used: if usb_connected { Some(usb_used) } else { None },
-        usage: if usb_connected { Some(usb_usage_real) } else { None }
-    };
+        // 시스템 정보 다시 갱신
+        sys.refresh_all();
 
-    // 4. status 및 issues 계산 (기존 응답 기반)
-    let mut issues = Vec::new();
-    let mut status = "normal".to_string();
 
-    for report in &reports {
-        for app in &report.apps {
-            for item in &app.items {
-                let new_status = match item.name.as_str() {
-                    "cpu_usage_warning" => {
-                        if matches!(item.result, ReportPassFail::Fail) {
-                            issues.push("HIGH_CPU".to_string());
-                            "warning"
-                        } else {
-                            "normal"
-                        }
-                    }
-                    "cpu_usage_fatal" => {
-                        if matches!(item.result, ReportPassFail::Fail) {
-                            issues.push("HIGH_CPU".to_string());
-                            "critical"
-                        } else {
-                            "normal"
-                        }
-                    }
-                    "memory_usage_warning" => {
-                        if matches!(item.result, ReportPassFail::Fail) {
-                            issues.push("HIGH_MEMORY".to_string());
-                            "warning"
-                        } else {
-                            "normal"
-                        }
-                    }
-                    "memory_usage_fatal" => {
-                        if matches!(item.result, ReportPassFail::Fail) {
-                            issues.push("HIGH_MEMORY".to_string());
-                            "critical"
-                        } else {
-                            "normal"
-                        }
-                    }
-                    "storage_usage_warning" => {
-                        if matches!(item.result, ReportPassFail::Fail) {
-                            issues.push("LOW_STORAGE".to_string());
-                            "warning"
-                        } else {
-                            "normal"
-                        }
-                    }
-                    "storage_usage_fatal" => {
-                        if matches!(item.result, ReportPassFail::Fail) {
-                            issues.push("LOW_STORAGE".to_string());
-                            "critical"
-                        } else {
-                            "normal"
-                        }
-                    }
-                    _ => "normal"
-                };
-                status = compare_status(&status, new_status);
+        let cpu_usage: f32 = sys.cpus().iter()
+        .map(|cpu| cpu.cpu_usage())
+        .sum::<f32>() / cpu_count as f32; // 평균 CPU 사용률 계산
+
+        //디스크 및 USB 사용률
+        let disks = Disks::new_with_refreshed_list();
+        let mut usb_total_space = 0;
+        let mut usb_used_space = 0;
+        let mut regular_total_space = 0;
+        let mut regular_used_space = 0;
+        let mut usb_connected = false;
+
+        for disk in disks.list() {
+            let disk_total = disk.total_space();
+            let disk_used = disk_total - disk.available_space();
+
+            if disk.is_removable() {
+                // USB 드라이브의 경우
+                usb_connected = true; // USB가 연결되어 있음을 표시
+                usb_total_space += disk_total;
+                usb_used_space += disk_used;
+            } else {
+                // 일반 디스크의 경우
+                regular_total_space += disk_total;
+                regular_used_space += disk_used;
             }
         }
+
+        // USB 드라이브 사용량 비율 계산
+        let usb_usage = if usb_total_space > 0 {
+            (usb_used_space as f32 / usb_total_space as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        // 일반 디스크 사용량 비율 계산
+        let regular_usage = if regular_total_space > 0 {
+            (regular_used_space as f32 / regular_total_space as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        // 4. status 및 issues 계산 (기존 응답 기반)
+        let mut issues = Vec::new();
+        let mut system_status = "normal".to_string();
+
+        for report in &status {
+            for app in &report.apps {
+                for item in &app.items {
+                    let new_status = match item.name.as_str() {
+                        "cpu_usage_warning" => {
+                            if matches!(item.result, ReportPassFail::Fail) {
+                                issues.push("HIGH_CPU".to_string());
+                                "warning"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "cpu_usage_fatal" => {
+                            if matches!(item.result, ReportPassFail::Fail) {
+                                issues.push("HIGH_CPU".to_string());
+                                "critical"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "memory_usage_warning" => {
+                            if matches!(item.result, ReportPassFail::Fail) {
+                                issues.push("HIGH_MEMORY".to_string());
+                                "warning"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "memory_usage_fatal" => {
+                            if matches!(item.result, ReportPassFail::Fail) {
+                                issues.push("HIGH_MEMORY".to_string());
+                                "critical"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "storage_usage_warning" => {
+                            if matches!(item.result, ReportPassFail::Fail) {
+                                issues.push("LOW_STORAGE".to_string());
+                                "warning"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "storage_usage_fatal" => {
+                            if matches!(item.result, ReportPassFail::Fail) {
+                                issues.push("LOW_STORAGE".to_string());
+                                "critical"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        _ => "normal"
+                    };
+                    system_status = compare_status(&system_status, new_status);
+                }
+            }
+        }
+
+        Ok(Response::ok_with_data(json!(report)))
     }
 
-    // 5. 새로운 응답 구조체 생성
-    let new_response = NewResponse {
-        timestamp: reports.get(0).map_or(0, |r| r.published_time), // 첫 번째 Report의 published_time 사용
-        status,
-        issues,
-        cpu_usage: cpu_usage_real,
-        memory_usage: memory_usage_real,
-        storage: StorageInfo {
-            total: total_space,
-            used: used_space,
-            usage: storage_usage_real
-        },
-        usb,
-        network_connected: sys.networks().len() > 0,
-        tms_connected: false
-    };
-
-    Ok(warp::reply::json(&json!(new_response)))
-}
+failed to resolve: use of undeclared type `ReportPassFail`
+use of undeclared type `ReportPassFail`rustcClick for full compiler diagnostic
+diagnosis.rs(78, 5): consider importing this enum: `use platform_common_types::diagnosis::ReportPassFail;
