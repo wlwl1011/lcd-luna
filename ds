@@ -1,58 +1,153 @@
-{
-    "returnValue": true,
-    "report": {
-        "publishedTime": 1739925174,
-        "apps": [
-            {
-                "passCount": 7,
-                "items": [
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "cpu_usage_fatal",
-                        "publishedTime": 1740360662
-                    },
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "cpu_usage_warning",
-                        "publishedTime": 1740360662
-                    },
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "memory_usage_fatal",
-                        "publishedTime": 1740360662
-                    },
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "memory_usage_warning",
-                        "publishedTime": 1740360662
-                    },
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "storage_usage_fatal",
-                        "publishedTime": 1740360662
-                    },
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "storage_usage_warning",
-                        "publishedTime": 1740360662
-                    },
-                    {
-                        "result": "pass",
-                        "comment": "",
-                        "name": "connection",
-                        "publishedTime": 1740360662
-                    }
-                ],
-                "name": "system",
-                "publishedTime": 1740360662,
-                "failCount": 0
-            }
-        ]
+use serde_json::{json, Value};
+use sysinfo::{System, SystemExt, DiskExt, ProcessorExt};
+
+// status 우선순위 비교 함수
+fn compare_status(current: &str, new: &str) -> String {
+    match (current, new) {
+        ("critical", _) | (_, "critical") => "critical".to_string(),
+        ("warning", _) | (_, "warning") => "warning".to_string(),
+        _ => "normal".to_string(),
     }
+}
+
+pub async fn get_reports(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
+    // 1. 기존 데이터 가져오기
+    let reports = match diagnosis::get_reports().await {
+        Ok(reports) => reports,
+        Err(e) => {
+            error!("get_reports failed: {}", e);
+            return Ok(warp::reply::json(&json!({
+                "error": "get_reports failed"
+            })));
+        }
+    };
+
+    // 2. JSON 파싱 (`serde_json::Value` 타입)
+    let reports_json: Value = serde_json::from_value(reports).unwrap();
+
+    // 3. sysinfo로 실시간 시스템 정보 가져오기
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    // 4. 실시간 사용률 계산 (sysinfo에서 직접 가져옴)
+    let cpu_usage_real = sys.global_processor_info().cpu_usage();
+    let total_memory = sys.total_memory();
+    let used_memory = sys.used_memory();
+    let memory_usage_real = (used_memory as f32 / total_memory as f32) * 100.0;
+
+    let mut total_space = 0;
+    let mut used_space = 0;
+    for disk in sys.disks() {
+        total_space += disk.total_space();
+        used_space += disk.total_space() - disk.available_space();
+    }
+    let storage_usage_real = (used_space as f32 / total_space as f32) * 100.0;
+
+    // USB 사용량 계산
+    let mut usb_total = 0;
+    let mut usb_used = 0;
+    let mut usb_connected = false;
+    for disk in sys.disks() {
+        let disk_name = disk.name().to_str().unwrap_or("").to_lowercase();
+        if disk_name.contains("usb") {
+            usb_total += disk.total_space();
+            usb_used += disk.total_space() - disk.available_space();
+            usb_connected = true;
+        }
+    }
+    let usb_usage_real = if usb_total > 0 {
+        (usb_used as f32 / usb_total as f32) * 100.0
+    } else {
+        0.0
+    };
+    let usb = UsbStatus {
+        connected: usb_connected,
+        total: if usb_connected { Some(usb_total) } else { None },
+        used: if usb_connected { Some(usb_used) } else { None },
+        usage: if usb_connected { Some(usb_usage_real) } else { None }
+    };
+
+    // 5. status 및 issues 계산 (기존 응답 기반)
+    let mut issues = Vec::new();
+    let mut status = "normal".to_string();
+
+    if let Some(apps) = reports_json["report"]["apps"].as_array() {
+        for app in apps {
+            if let Some(items) = app["items"].as_array() {
+                for item in items {
+                    let new_status = match item["name"].as_str().unwrap() {
+                        "cpu_usage_warning" => {
+                            if item["result"].as_str().unwrap() == "fail" {
+                                issues.push("HIGH_CPU".to_string());
+                                "warning"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "cpu_usage_fatal" => {
+                            if item["result"].as_str().unwrap() == "fail" {
+                                issues.push("HIGH_CPU".to_string());
+                                "critical"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "memory_usage_warning" => {
+                            if item["result"].as_str().unwrap() == "fail" {
+                                issues.push("HIGH_MEMORY".to_string());
+                                "warning"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "memory_usage_fatal" => {
+                            if item["result"].as_str().unwrap() == "fail" {
+                                issues.push("HIGH_MEMORY".to_string());
+                                "critical"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "storage_usage_warning" => {
+                            if item["result"].as_str().unwrap() == "fail" {
+                                issues.push("LOW_STORAGE".to_string());
+                                "warning"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        "storage_usage_fatal" => {
+                            if item["result"].as_str().unwrap() == "fail" {
+                                issues.push("LOW_STORAGE".to_string());
+                                "critical"
+                            } else {
+                                "normal"
+                            }
+                        }
+                        _ => "normal"
+                    };
+                    status = compare_status(&status, new_status);
+                }
+            }
+        }
+    }
+
+    // 6. 새로운 응답 구조체 생성
+    let new_response = NewResponse {
+        timestamp: reports_json["report"]["publishedTime"].as_i64().unwrap_or(0),
+        status,
+        issues,
+        cpu_usage: cpu_usage_real,
+        memory_usage: memory_usage_real,
+        storage: StorageInfo {
+            total: total_space,
+            used: used_space,
+            usage: storage_usage_real
+        },
+        usb,
+        network_connected: sys.networks().len() > 0,
+        tms_connected: false
+    };
+
+    Ok(warp::reply::json(&json!(new_response)))
 }
