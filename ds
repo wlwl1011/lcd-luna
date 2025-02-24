@@ -1,18 +1,58 @@
-pub async fn get_reports(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("get_reports");
-
-        let reports = match diagnosis::get_reports().await {
-            Ok(reports) => reports,
-            Err(e) => {
-                error!("get_reports failed: {}", e);
-                return Ok(Response::err("get_reports failed".to_string()));
+{
+    "returnValue": true,
+    "report": {
+        "publishedTime": 1739925174,
+        "apps": [
+            {
+                "passCount": 7,
+                "items": [
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "cpu_usage_fatal",
+                        "publishedTime": 1740360662
+                    },
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "cpu_usage_warning",
+                        "publishedTime": 1740360662
+                    },
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "memory_usage_fatal",
+                        "publishedTime": 1740360662
+                    },
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "memory_usage_warning",
+                        "publishedTime": 1740360662
+                    },
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "storage_usage_fatal",
+                        "publishedTime": 1740360662
+                    },
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "storage_usage_warning",
+                        "publishedTime": 1740360662
+                    },
+                    {
+                        "result": "pass",
+                        "comment": "",
+                        "name": "connection",
+                        "publishedTime": 1740360662
+                    }
+                ],
+                "name": "system",
+                "publishedTime": 1740360662,
+                "failCount": 0
             }
-        };
-
-        Ok(Response::ok_with_data(json!(reports)))
+        ]
     }
+}
