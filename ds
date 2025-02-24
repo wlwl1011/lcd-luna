@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::json;
 use sysinfo::{System, SystemExt, DiskExt, ProcessorExt};
 
 // status 우선순위 비교 함수
@@ -11,9 +11,9 @@ fn compare_status(current: &str, new: &str) -> String {
 }
 
 pub async fn get_reports(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
-    // 1. 기존 데이터 가져오기
+    // 1. 기존 데이터 가져오기 (Vec<Report> 타입)
     let reports = match diagnosis::get_reports().await {
-        Ok(reports) => reports,
+        Ok(reports) => reports,  // ✅ Vec<Report> 그대로 사용
         Err(e) => {
             error!("get_reports failed: {}", e);
             return Ok(warp::reply::json(&json!({
@@ -22,14 +22,11 @@ pub async fn get_reports(_token: Option<String>) -> Result<impl warp::Reply, war
         }
     };
 
-    // 2. JSON 파싱 (`serde_json::Value` 타입)
-    let reports_json: Value = serde_json::from_value(reports).unwrap();
-
-    // 3. sysinfo로 실시간 시스템 정보 가져오기
+    // 2. sysinfo로 실시간 시스템 정보 가져오기
     let mut sys = System::new_all();
     sys.refresh_all();
 
-    // 4. 실시간 사용률 계산 (sysinfo에서 직접 가져옴)
+    // 3. 실시간 사용률 계산 (sysinfo에서 직접 가져옴)
     let cpu_usage_real = sys.global_processor_info().cpu_usage();
     let total_memory = sys.total_memory();
     let used_memory = sys.used_memory();
@@ -67,74 +64,72 @@ pub async fn get_reports(_token: Option<String>) -> Result<impl warp::Reply, war
         usage: if usb_connected { Some(usb_usage_real) } else { None }
     };
 
-    // 5. status 및 issues 계산 (기존 응답 기반)
+    // 4. status 및 issues 계산 (기존 응답 기반)
     let mut issues = Vec::new();
     let mut status = "normal".to_string();
 
-    if let Some(apps) = reports_json["report"]["apps"].as_array() {
-        for app in apps {
-            if let Some(items) = app["items"].as_array() {
-                for item in items {
-                    let new_status = match item["name"].as_str().unwrap() {
-                        "cpu_usage_warning" => {
-                            if item["result"].as_str().unwrap() == "fail" {
-                                issues.push("HIGH_CPU".to_string());
-                                "warning"
-                            } else {
-                                "normal"
-                            }
+    for report in &reports {
+        for app in &report.apps {
+            for item in &app.items {
+                let new_status = match item.name.as_str() {
+                    "cpu_usage_warning" => {
+                        if matches!(item.result, ReportPassFail::Fail) {
+                            issues.push("HIGH_CPU".to_string());
+                            "warning"
+                        } else {
+                            "normal"
                         }
-                        "cpu_usage_fatal" => {
-                            if item["result"].as_str().unwrap() == "fail" {
-                                issues.push("HIGH_CPU".to_string());
-                                "critical"
-                            } else {
-                                "normal"
-                            }
+                    }
+                    "cpu_usage_fatal" => {
+                        if matches!(item.result, ReportPassFail::Fail) {
+                            issues.push("HIGH_CPU".to_string());
+                            "critical"
+                        } else {
+                            "normal"
                         }
-                        "memory_usage_warning" => {
-                            if item["result"].as_str().unwrap() == "fail" {
-                                issues.push("HIGH_MEMORY".to_string());
-                                "warning"
-                            } else {
-                                "normal"
-                            }
+                    }
+                    "memory_usage_warning" => {
+                        if matches!(item.result, ReportPassFail::Fail) {
+                            issues.push("HIGH_MEMORY".to_string());
+                            "warning"
+                        } else {
+                            "normal"
                         }
-                        "memory_usage_fatal" => {
-                            if item["result"].as_str().unwrap() == "fail" {
-                                issues.push("HIGH_MEMORY".to_string());
-                                "critical"
-                            } else {
-                                "normal"
-                            }
+                    }
+                    "memory_usage_fatal" => {
+                        if matches!(item.result, ReportPassFail::Fail) {
+                            issues.push("HIGH_MEMORY".to_string());
+                            "critical"
+                        } else {
+                            "normal"
                         }
-                        "storage_usage_warning" => {
-                            if item["result"].as_str().unwrap() == "fail" {
-                                issues.push("LOW_STORAGE".to_string());
-                                "warning"
-                            } else {
-                                "normal"
-                            }
+                    }
+                    "storage_usage_warning" => {
+                        if matches!(item.result, ReportPassFail::Fail) {
+                            issues.push("LOW_STORAGE".to_string());
+                            "warning"
+                        } else {
+                            "normal"
                         }
-                        "storage_usage_fatal" => {
-                            if item["result"].as_str().unwrap() == "fail" {
-                                issues.push("LOW_STORAGE".to_string());
-                                "critical"
-                            } else {
-                                "normal"
-                            }
+                    }
+                    "storage_usage_fatal" => {
+                        if matches!(item.result, ReportPassFail::Fail) {
+                            issues.push("LOW_STORAGE".to_string());
+                            "critical"
+                        } else {
+                            "normal"
                         }
-                        _ => "normal"
-                    };
-                    status = compare_status(&status, new_status);
-                }
+                    }
+                    _ => "normal"
+                };
+                status = compare_status(&status, new_status);
             }
         }
     }
 
-    // 6. 새로운 응답 구조체 생성
+    // 5. 새로운 응답 구조체 생성
     let new_response = NewResponse {
-        timestamp: reports_json["report"]["publishedTime"].as_i64().unwrap_or(0),
+        timestamp: reports.get(0).map_or(0, |r| r.published_time), // 첫 번째 Report의 published_time 사용
         status,
         issues,
         cpu_usage: cpu_usage_real,
