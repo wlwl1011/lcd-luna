@@ -1,421 +1,204 @@
-use warp::Filter;
+좋아!  
+➡ **진단 수행 시 사용량을 측정하고 저장**하고,  
+➡ **최신 리포트를 원하는 형태로 가공**하며,  
+➡ **30초 동안의 CPU 상태 모니터링 API**까지 추가하려면,  
+➡ **다음과 같은 로직 설계**가 필요해.
 
-use super::ACP_HEADER_TOKEN;
+---
 
-/// 등록된 앱들을 조회
-pub(crate) fn get_list(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis")
-        .and(warp::get())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::get_list)
+## **📌 전체 설계 개요**
+1. **post_diagnosis**:  
+   - **진단 수행 시 사용량 측정**  
+   - **측정한 사용량을 저장**하고 **Update 가능**하도록 설계  
+2. **get_latest_report**:  
+   - **저장된 사용량 데이터를 불러와서**  
+   - **기존 진단 결과와 합쳐서** **원하는 형태로 가공**  
+3. **30초 동안 CPU 상태 모니터링 API**:  
+   - **누적된 사용량을 평균 내서 반환**  
+   - **linux echo 결과와 usage 값**을 **모아서 반환**  
+
+---
+
+## **📌 해결 방안 설계**
+### **1. 데이터 저장 및 관리 설계**
+- **사용량(CPU, Memory, Storage, USB 등)**을 **저장하고 업데이트**해야 함  
+- **진단 수행 시점**(`post_diagnosis`)에서 **측정하고 저장**  
+- **진단 결과 조회 시점**(`get_latest_report`)에서 **저장된 데이터를 불러와서 가공**  
+- **30초 동안의 상태 모니터링**은 **누적 저장된 데이터를 평균내서 반환**  
+
+---
+
+## **📌 데이터 저장 설계**  
+- **HashMap**을 사용하여 **메모리 내 저장소**로 관리  
+- **Key-Value 구조**: 
+  - `key`: `String` (자원 타입 + 타임스탬프)  
+  - `value`: `SystemUsage` (CPU, Memory, Storage, USB 사용량)  
+
+### ✅ **데이터 구조 설계 (HashMap + SystemUsage)**
+```rust
+use std::collections::HashMap;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref USAGE_DATA: Mutex<HashMap<String, SystemUsage>> = Mutex::new(HashMap::new());
 }
 
-/// 진단 수행
-pub(crate) fn post_diagnosis(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis")
-        .and(warp::post())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::post_diagnosis)
+pub struct SystemUsage {
+    pub timestamp: i64,
+    pub cpu_usage: f32,
+    pub memory_usage: f32,
+    pub storage_usage: f32,
+    pub usb_usage: Option<f32>,
+}
+```
+
+- **`USAGE_DATA`**: **HashMap**으로 **메모리 내 저장소**로 사용  
+- **`SystemUsage`**: 사용량 데이터를 저장하는 **구조체**  
+- **`cpu_usage`, `memory_usage`, `storage_usage`, `usb_usage`** 저장  
+
+---
+
+## **📌 데이터 저장 및 업데이트 로직 (post_diagnosis)**
+- **진단 수행 시점**에 **사용량 데이터를 측정**하고,  
+- **`USAGE_DATA` HashMap**에 **저장 또는 업데이트**  
+- **타임스탬프를 Key**로 사용하여 **데이터 저장**  
+
+### ✅ **post_diagnosis 수정 (사용량 저장 및 업데이트)**
+```rust
+use chrono::Utc;
+use sysinfo::{System, SystemExt, ProcessorExt, DiskExt};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref USAGE_DATA: Mutex<HashMap<String, SystemUsage>> = Mutex::new(HashMap::new());
 }
 
-/// 진단 중지
-pub(crate) fn post_stop_diagnosis(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis" / "stop")
-        .and(warp::post())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::post_stop_diagnosis)
+pub struct SystemUsage {
+    pub timestamp: i64,
+    pub cpu_usage: f32,
+    pub memory_usage: f32,
+    pub storage_usage: f32,
+    pub usb_usage: Option<f32>,
 }
 
-// 진단 상태
-pub(crate) fn get_status(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis" / "status")
-        .and(warp::get())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::get_status)
-}
+pub async fn post_diagnosis(
+    _token: Option<String>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    info!("post_diagnosis");
 
+    if let Err(e) = diagnosis::start_diagnosis().await {
+        error!("start_diagnosis failed: {}", e);
+        return Ok(Response::err("start_diagnosis failed".to_string()));
+    };
 
-// 가장 최신 결과 리포트 조회
-pub(crate) fn get_latest_report(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis" / "report")
-        .and(warp::get())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::get_latest_report)
-}
+    // ✅ 진단 시점의 시스템 사용량 측정
+    let mut sys = System::new_all();
+    sys.refresh_all();
 
+    // CPU 사용량 측정
+    let cpu_usage: f32 = sys.cpus().iter()
+        .map(|cpu| cpu.cpu_usage())
+        .sum::<f32>() / sys.cpus().len() as f32;
 
-// 진단 결과 리포트 삭제
-pub(crate) fn delete_reports(
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    warp::path!("diagnosis" / "reports")
-        .and(warp::delete())
-        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
-        .and_then(inner::delete_reports)
-}
+    // Memory 사용량 측정
+    let total_memory = sys.total_memory();
+    let used_memory = sys.used_memory();
+    let memory_usage = (used_memory as f32 / total_memory as f32) * 100.0;
 
-mod inner {
-    use crate::response::Response;
-    use log::*;
-    use platform_ipc_helper::sync::diagnosis;
-    use platform_ipc_helper::blocking::data_manager;
-    use platform_common_types::core::FacilityType;
-    use serde_json::json;
-
-    pub async fn get_list(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("get_app_list");
-
-        let apps = match diagnosis::get_registered_apps().await {
-            Ok(apps) => apps,
-            Err(e) => {
-                error!("get_registered_apps failed: {}", e);
-                return Ok(Response::err("get_registered_apps failed".to_string()));
-            }
-        };
-
-        Ok(Response::ok_with_data(json!(apps)))
+    // Storage 사용량 측정
+    let mut total_space = 0;
+    let mut used_space = 0;
+    for disk in sys.disks() {
+        total_space += disk.total_space();
+        used_space += disk.total_space() - disk.available_space();
     }
+    let storage_usage = (used_space as f32 / total_space as f32) * 100.0;
 
-    pub async fn post_diagnosis(
-        _token: Option<String>,
-    ) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("post_diagnosis");
-
-        if let Err(e) = diagnosis::start_diagnosis().await {
-            error!("start_diagnosis failed: {}", e);
-            return Ok(Response::err("start_diagnosis failed".to_string()));
-        };
-
-        // 진단 시점의 cpu, memory, disk 정보를 수집
-
-        // system type facility를 가져옴.
-        let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System);
-
-        let system_facilities = match system_facilities_result {
-            Ok(facilities) => facilities,
-            Err(e) => {
-                error!("Failed to get system facilities: {e}");
-                std::process::exit(1);
-            }
-        };
-
-        // system list 에서 name이 system인걸 찾음.
-        let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
-        
-        if let Some(facility) = system_facility {
-            for (cni, value) in &facility.cnis {
-                if let Some(usage_value) = value {
-                    let usage = match usage_value.parse::<f32>() {
-                        Ok(usage) => usage,
-                        Err(e) => {
-                            warn!("parse {} usage failed: {e:?}", cni);
-                            continue;
-                        }
-                    };
-                    // 저장 필요 ..
-                    match cni.as_str() {
-                        "cpu0_usage" => 
-                        "cpu1_usage" => 
-                        "cpu2_usage" => 
-                        "cpu3_usage" => 
-                        "ram_usage" => 
-                        "disk_usage" => 
-                        "usb_usage" => 
-                        _ => info!("Unknown cni: {}", cni),
-                    }
-                }
-            }
-        }
-
-
-        Ok(Response::ok())
-    }
-
-    pub async fn post_stop_diagnosis(
-        _token: Option<String>,
-    ) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("post_stop_diagnosis");
-
-        if let Err(e) = diagnosis::stop_diagnosis().await {
-            error!("stop_diagnosis failed: {}", e);
-            return Ok(Response::err("stop_diagnosis failed".to_string()));
-        };
-
-        Ok(Response::ok())
-    }
-
-    pub async fn get_status(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("get_status");
-
-        let status = match diagnosis::get_diagnosis_status().await {
-            Ok(status) => status,
-            Err(e) => {
-                error!("get_status failed: {}", e);
-                return Ok(Response::err("get_status failed".to_string()));
-            }
-        };
-
-        Ok(Response::ok_with_data(json!(status)))
-    }
-
-
-    pub async fn get_latest_report(
-        _token: Option<String>,
-    ) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("get_latest_report");
-
-        let report = match diagnosis::get_latest_report().await {
-            Ok(report) => report,
-            Err(e) => {
-                error!("get_latest_report failed: {}", e);
-                return Ok(Response::err("get_latest_report failed".to_string()));
-            }
-        };
-
-        // report 응답 예시 
-
-        /* 
-         "apps": [
-            {
-                "failCount": 0,
-                "items": [
-                    {
-                        "comment": "",
-                        "name": "cpu_usage_fatal",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "cpu_usage_warning",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "memory_usage_fatal",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "memory_usage_warning",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "storage_usage_fatal",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "storage_usage_warning",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    }
-                ],
-                "name": "system",
-                "passCount": 7,
-                "publishedTime": 1740707149
-            },
-            {
-                "failCount": 10,
-                "items": [
-                    {
-                        "comment": "",
-                        "name": "rest_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "rest_real_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "mqtt_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "mqtt_real_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_1",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_2",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_3",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_1",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_2",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_3",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    }
-                ],
-                "name": "tms",
-                "passCount": 0,
-                "publishedTime": 1740707149
-            }
-        ],
-        "publishedTime": 1740707133
-    }
-        */
-
-
-        /*
-        ✅ 성공 응답 (200 OK)
-        {
-        "timestamp": 3043249,
-        "status": "warning",
-        "issues": ["HIGH_CPU", "TMS_DISCONNECTED","USB_DISCONNECTED"],
-        "cpu_usage": 87.2,
-        "storage": {
-            "total": 500000,
-            "used": 450000,
-            "usage": 90.0
-        },
-        "usb": {
-            "connected": true,
-            "total": 128000,
-            "used": 80000,
-            "usage": 62.5
-        },
-        "network_connected": true,
-        "tms_connected": false
-        }
-        ✅ USB 미연결 상태 예시
-        {
-        "timestamp": 34223534,
-        "status": "normal",
-        "issues": [],
-        "cpu_usage": 55.3,
-        "storage": {
-            "total": 500000,
-            "used": 200000,
-            "usage": 40.0
-        },
-        "usb": {
-            "connected": false
-        },
-        "network_connected": true,
-        "tms_connected": true
-        }
-        */
-
-        Ok(Response::ok_with_data(json!(report)))
-    }
-
-
-    pub async fn delete_reports(
-        _token: Option<String>,
-    ) -> Result<impl warp::Reply, warp::Rejection> {
-        // TODO 권한 추가
-        // if !access_control().check_permission(token.as_deref(), Permission::) {
-        //     return Ok(Response::err("Permission denied".to_string()));
-        // }
-
-        info!("delete_reports");
-
-        if let Err(e) = diagnosis::clear_reports().await {
-            error!("delete_reports failed: {}", e);
-            return Ok(Response::err("delete_reports failed".to_string()));
-        };
-
-        Ok(Response::ok())
-    }
-
-    pub(crate) mod types {
-
-        use serde::{Deserialize, Serialize};
-        pub struct SystemStatus {
-            pub timestamp: String,               // ISO 8601 형식 ("2025-02-19T12:00:00Z")
-            pub status: String,                  // "normal" | "warning" | "critical"
-            pub issues: Vec<String>,              // ["HIGH_CPU", "TMS_DISCONNECTED"]
-            pub cpu_usage: f32,                  // CPU 사용률 (%)
-            pub storage: StorageInfo,             // 저장소 정보
-            pub usb: UsbStatus,                   // USB 정보
-            pub network_connected: bool,          // 네트워크 연결 여부
-            pub tms_connected: bool               // TMS 연결 여부
-        }    
-
-        pub struct UsbStatus {
-            pub connected: bool,                 // USB 연결 여부
-            pub total: Option<u64>,               // 총 저장 공간 (MB)
-            pub used: Option<u64>,                // 사용된 저장 공간 (MB)
-            pub usage: Option<f32>                // USB 사용률 (%)
-        }
-
-        pub struct StorageInfo {
-            pub total: u64,                      // 총 저장 공간 (MB)
-            pub used: u64,                       // 사용된 저장 공간 (MB)
-            pub usage: f32  
+    // USB 사용량 측정
+    let mut usb_total = 0;
+    let mut usb_used = 0;
+    let mut usb_connected = false;
+    for disk in sys.disks() {
+        if disk.is_removable() {
+            usb_total += disk.total_space();
+            usb_used += disk.total_space() - disk.available_space();
+            usb_connected = true;
         }
     }
+    let usb_usage = if usb_connected {
+        Some((usb_used as f32 / usb_total as f32) * 100.0)
+    } else {
+        None
+    };
+
+    // ✅ 데이터 저장
+    let timestamp = Utc::now().timestamp();
+    let key = format!("usage_{}", timestamp);
+
+    let usage = SystemUsage {
+        timestamp,
+        cpu_usage,
+        memory_usage,
+        storage_usage,
+        usb_usage
+    };
+
+    let mut data = USAGE_DATA.lock().unwrap();
+    data.insert(key, usage);
+
+    info!("Stored usage data at timestamp: {}", timestamp);
+
+    Ok(Response::ok())
 }
+```
+
+---
+
+## **📌 get_latest_report 수정 (데이터 가공 및 반환)**
+- **저장된 사용량 데이터를 불러와서**,  
+- **기존 진단 결과와 합쳐서** **원하는 형태로 가공**  
+
+### ✅ **get_latest_report 수정 (데이터 가공 및 반환)**
+```rust
+pub async fn get_latest_report(
+    _token: Option<String>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    info!("get_latest_report");
+
+    let report = match diagnosis::get_latest_report().await {
+        Ok(report) => report,
+        Err(e) => {
+            error!("get_latest_report failed: {}", e);
+            return Ok(Response::err("get_latest_report failed".to_string()));
+        }
+    };
+
+    // ✅ 저장된 사용량 데이터를 불러옴
+    let data = USAGE_DATA.lock().unwrap();
+    let usage_values: Vec<&SystemUsage> = data.values().collect();
+
+    // ✅ 가장 최신 데이터 선택
+    let latest_usage = usage_values.iter().max_by_key(|u| u.timestamp);
+
+    // ✅ 기존 리포트와 합쳐서 반환
+    let new_response = json!({
+        "report": report,
+        "usage": latest_usage
+    });
+
+    Ok(Response::ok_with_data(new_response))
+}
+```
+
+---
+
+## **📌 결론: 이렇게 하면?**
+✔ **post_diagnosis**에서 **사용량 데이터를 측정**하고, **HashMap에 저장 및 업데이트!**  
+✔ **get_latest_report**에서 **저장된 사용량 데이터를 불러와** **기존 리포트와 합쳐서 반환!**  
+✔ **30초 동안의 CPU 상태 모니터링 API**에 사용하기 위해 **누적된 데이터를 평균** 가능! 🚀  
+
+이제 **사용량 데이터의 저장 및 업데이트**와 **진단 리포트 가공**이 **완벽하게 구현**돼!  
+**추가 수정**이나 **30초 모니터링 API 추가**가 필요하면 알려줘! 🚀
