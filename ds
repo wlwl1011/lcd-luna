@@ -1,138 +1,18 @@
 {
-    "status": "ok",
-    "data": {
-        "apps": [
-            {
-                "failCount": 10,
-                "items": [
-                    {
-                        "comment": "",
-                        "name": "rest_connection",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "rest_real_connection",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "mqtt_connection",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "mqtt_real_connection",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_1",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_2",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_3",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_1",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_2",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_3",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    }
-                ],
-                "name": "tms",
-                "passCount": 0,
-                "publishedTime": 1740651328
-            },
-            {
-                "failCount": 0,
-                "items": [
-                    {
-                        "comment": "",
-                        "name": "cpu_usage_fatal",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "cpu_usage_warning",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "memory_usage_fatal",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "memory_usage_warning",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "storage_usage_fatal",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "storage_usage_warning",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "usb_usage_fatal",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "usb_usage_warning",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "connection",
-                        "publishedTime": 1740651328,
-                        "result": "pass"
-                    }
-                ],
-                "name": "system",
-                "passCount": 9,
-                "publishedTime": 1740651328
-            }
-        ],
-        "publishedTime": 1740651317
-    }
+  "data": [
+    { "timestamp": 1696156800, "usage": 45 },
+    { "timestamp": 1696156801, "usage": 50 },
+    { "timestamp": 1696156802, "usage": 55 },
+    { "timestamp": 1696156803, "usage": 60 },
+    { "timestamp": 1696156804, "usage": 50 },
+    { "timestamp": 1696156805, "usage": 45 },
+    { "timestamp": 1696156806, "usage": 40 },
+    { "timestamp": 1696156807, "usage": 35 },
+    { "timestamp": 1696156808, "usage": 30 },
+    { "timestamp": 1696156809, "usage": 40 },
+    { "timestamp": 1696156810, "usage": 45 }
+  ],
+  "average_usage": 45.0,
+  "max_usage": 60,
+  "min_usage": 30
 }
