@@ -1,18 +1,421 @@
-{
-  "data": [
-    { "timestamp": 1696156800, "usage": 45 },
-    { "timestamp": 1696156801, "usage": 50 },
-    { "timestamp": 1696156802, "usage": 55 },
-    { "timestamp": 1696156803, "usage": 60 },
-    { "timestamp": 1696156804, "usage": 50 },
-    { "timestamp": 1696156805, "usage": 45 },
-    { "timestamp": 1696156806, "usage": 40 },
-    { "timestamp": 1696156807, "usage": 35 },
-    { "timestamp": 1696156808, "usage": 30 },
-    { "timestamp": 1696156809, "usage": 40 },
-    { "timestamp": 1696156810, "usage": 45 }
-  ],
-  "average_usage": 45.0,
-  "max_usage": 60,
-  "min_usage": 30
+use warp::Filter;
+
+use super::ACP_HEADER_TOKEN;
+
+/// 등록된 앱들을 조회
+pub(crate) fn get_list(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::get_list)
+}
+
+/// 진단 수행
+pub(crate) fn post_diagnosis(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis")
+        .and(warp::post())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::post_diagnosis)
+}
+
+/// 진단 중지
+pub(crate) fn post_stop_diagnosis(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "stop")
+        .and(warp::post())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::post_stop_diagnosis)
+}
+
+// 진단 상태
+pub(crate) fn get_status(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "status")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::get_status)
+}
+
+
+// 가장 최신 결과 리포트 조회
+pub(crate) fn get_latest_report(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "report")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::get_latest_report)
+}
+
+
+// 진단 결과 리포트 삭제
+pub(crate) fn delete_reports(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "reports")
+        .and(warp::delete())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::delete_reports)
+}
+
+mod inner {
+    use crate::response::Response;
+    use log::*;
+    use platform_ipc_helper::sync::diagnosis;
+    use platform_ipc_helper::blocking::data_manager;
+    use platform_common_types::core::FacilityType;
+    use serde_json::json;
+
+    pub async fn get_list(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        info!("get_app_list");
+
+        let apps = match diagnosis::get_registered_apps().await {
+            Ok(apps) => apps,
+            Err(e) => {
+                error!("get_registered_apps failed: {}", e);
+                return Ok(Response::err("get_registered_apps failed".to_string()));
+            }
+        };
+
+        Ok(Response::ok_with_data(json!(apps)))
+    }
+
+    pub async fn post_diagnosis(
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        info!("post_diagnosis");
+
+        if let Err(e) = diagnosis::start_diagnosis().await {
+            error!("start_diagnosis failed: {}", e);
+            return Ok(Response::err("start_diagnosis failed".to_string()));
+        };
+
+        // 진단 시점의 cpu, memory, disk 정보를 수집
+
+        // system type facility를 가져옴.
+        let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System);
+
+        let system_facilities = match system_facilities_result {
+            Ok(facilities) => facilities,
+            Err(e) => {
+                error!("Failed to get system facilities: {e}");
+                std::process::exit(1);
+            }
+        };
+
+        // system list 에서 name이 system인걸 찾음.
+        let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
+        
+        if let Some(facility) = system_facility {
+            for (cni, value) in &facility.cnis {
+                if let Some(usage_value) = value {
+                    let usage = match usage_value.parse::<f32>() {
+                        Ok(usage) => usage,
+                        Err(e) => {
+                            warn!("parse {} usage failed: {e:?}", cni);
+                            continue;
+                        }
+                    };
+                    // 저장 필요 ..
+                    match cni.as_str() {
+                        "cpu0_usage" => 
+                        "cpu1_usage" => 
+                        "cpu2_usage" => 
+                        "cpu3_usage" => 
+                        "ram_usage" => 
+                        "disk_usage" => 
+                        "usb_usage" => 
+                        _ => info!("Unknown cni: {}", cni),
+                    }
+                }
+            }
+        }
+
+
+        Ok(Response::ok())
+    }
+
+    pub async fn post_stop_diagnosis(
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        info!("post_stop_diagnosis");
+
+        if let Err(e) = diagnosis::stop_diagnosis().await {
+            error!("stop_diagnosis failed: {}", e);
+            return Ok(Response::err("stop_diagnosis failed".to_string()));
+        };
+
+        Ok(Response::ok())
+    }
+
+    pub async fn get_status(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        info!("get_status");
+
+        let status = match diagnosis::get_diagnosis_status().await {
+            Ok(status) => status,
+            Err(e) => {
+                error!("get_status failed: {}", e);
+                return Ok(Response::err("get_status failed".to_string()));
+            }
+        };
+
+        Ok(Response::ok_with_data(json!(status)))
+    }
+
+
+    pub async fn get_latest_report(
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        info!("get_latest_report");
+
+        let report = match diagnosis::get_latest_report().await {
+            Ok(report) => report,
+            Err(e) => {
+                error!("get_latest_report failed: {}", e);
+                return Ok(Response::err("get_latest_report failed".to_string()));
+            }
+        };
+
+        // report 응답 예시 
+
+        /* 
+         "apps": [
+            {
+                "failCount": 0,
+                "items": [
+                    {
+                        "comment": "",
+                        "name": "cpu_usage_fatal",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "cpu_usage_warning",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "memory_usage_fatal",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "memory_usage_warning",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "storage_usage_fatal",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "storage_usage_warning",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "connection",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    }
+                ],
+                "name": "system",
+                "passCount": 7,
+                "publishedTime": 1740707149
+            },
+            {
+                "failCount": 10,
+                "items": [
+                    {
+                        "comment": "",
+                        "name": "rest_connection",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "rest_real_connection",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "mqtt_connection",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "mqtt_real_connection",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "crl_connection_1",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "crl_connection_2",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "crl_connection_3",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "ocsp_connection_1",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "ocsp_connection_2",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    },
+                    {
+                        "comment": "",
+                        "name": "ocsp_connection_3",
+                        "publishedTime": 1740707149,
+                        "result": "pass"
+                    }
+                ],
+                "name": "tms",
+                "passCount": 0,
+                "publishedTime": 1740707149
+            }
+        ],
+        "publishedTime": 1740707133
+    }
+        */
+
+
+        /*
+        ✅ 성공 응답 (200 OK)
+        {
+        "timestamp": 3043249,
+        "status": "warning",
+        "issues": ["HIGH_CPU", "TMS_DISCONNECTED","USB_DISCONNECTED"],
+        "cpu_usage": 87.2,
+        "storage": {
+            "total": 500000,
+            "used": 450000,
+            "usage": 90.0
+        },
+        "usb": {
+            "connected": true,
+            "total": 128000,
+            "used": 80000,
+            "usage": 62.5
+        },
+        "network_connected": true,
+        "tms_connected": false
+        }
+        ✅ USB 미연결 상태 예시
+        {
+        "timestamp": 34223534,
+        "status": "normal",
+        "issues": [],
+        "cpu_usage": 55.3,
+        "storage": {
+            "total": 500000,
+            "used": 200000,
+            "usage": 40.0
+        },
+        "usb": {
+            "connected": false
+        },
+        "network_connected": true,
+        "tms_connected": true
+        }
+        */
+
+        Ok(Response::ok_with_data(json!(report)))
+    }
+
+
+    pub async fn delete_reports(
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        info!("delete_reports");
+
+        if let Err(e) = diagnosis::clear_reports().await {
+            error!("delete_reports failed: {}", e);
+            return Ok(Response::err("delete_reports failed".to_string()));
+        };
+
+        Ok(Response::ok())
+    }
+
+    pub(crate) mod types {
+
+        use serde::{Deserialize, Serialize};
+        pub struct SystemStatus {
+            pub timestamp: String,               // ISO 8601 형식 ("2025-02-19T12:00:00Z")
+            pub status: String,                  // "normal" | "warning" | "critical"
+            pub issues: Vec<String>,              // ["HIGH_CPU", "TMS_DISCONNECTED"]
+            pub cpu_usage: f32,                  // CPU 사용률 (%)
+            pub storage: StorageInfo,             // 저장소 정보
+            pub usb: UsbStatus,                   // USB 정보
+            pub network_connected: bool,          // 네트워크 연결 여부
+            pub tms_connected: bool               // TMS 연결 여부
+        }    
+
+        pub struct UsbStatus {
+            pub connected: bool,                 // USB 연결 여부
+            pub total: Option<u64>,               // 총 저장 공간 (MB)
+            pub used: Option<u64>,                // 사용된 저장 공간 (MB)
+            pub usage: Option<f32>                // USB 사용률 (%)
+        }
+
+        pub struct StorageInfo {
+            pub total: u64,                      // 총 저장 공간 (MB)
+            pub used: u64,                       // 사용된 저장 공간 (MB)
+            pub usage: f32  
+        }
+    }
 }
