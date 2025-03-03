@@ -1,599 +1,355 @@
-내가 참고한 부분의 코드는 이런식으로 별도의 tx,rx 이런거 없이 잘했는데 왜 나는 안되는거야? 나도 이 코드들을 최대한 참고해서 하면 tx, rx 안 써도 되는 거 아닌가? 
+뭔가 ... register함수 부분의 문제만은 아닌 것 같아. 내가 register 함수를 지우고 실행해도잘안돼. 
+여전히 " INFO  rest_server::utils::diagnosis::implement > Initializing CNI value: ram_usage - 27.579111                                                                                         
+ DEBUG moonlight::sync                          > Spawning luna service thread                                                                                                          
+thread '<unnamed>' panicked at /root/.cargo/registry/src/index.crates.io-6f17d22bba15001f/glib-0.18.5/src/main_context_futures.rs:562:14:                                               
+Spawning local futures only allowed on the thread owning the MainContext: BoolError { message: "Failed to acquire ownership of main context, already acquired by another thread", filen}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace   " 오류가 나 ... 
+자세히 찾아보니까 내부 함수에서, "pub(crate) fn get_ls_context(application_name: &str) -> &'static Mutex<LsContext> {
+    LS_CONTEXT.get_or_init(|| {
+        let ls_handle = get_ls_handle().unwrap_or_else(|e| {
+            panic!(
+                "Failed to register luna service handle: {:?} [{application_name}]",
+                e.to_string(),
+            )
+        });
+        let (tx, rx) = async_channel::unbounded();
+        let (watch_tx, watch_rx) = async_channel::unbounded();
 
-1. main 함수 부분
+        let context = LsContext {
+            sender: tx,
+            watcher: watch_tx,
+        };
+
+        debug!("Spawning luna service thread");
+        thread::spawn(move || {
+            let main_context = match get_main_context() {
+                Some(main_ctx) => main_ctx.to_owned(),
+                None => MainContext::default(),
+            };
+
+            let main_loop = LSGmain::new_from_context(ls_handle, &main_context);
+
+            main_context.spawn_local(async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(mut request) => {
+                            debug!("Received request to luna service");
+                            let responder = request.responder.take();
+                            if let Err(e) = ls_handle.call_one_reply(
+                                &request.uri,
+                                &request.msg,
+                                move |_, message| {
+                                    debug!("Received response from luna service");
+
+                                    let response = message.get_payload()?;
+                                    debug!("Response: {response}");
+
+                                    if let Some(responder) = &responder {
+                                        if let Err(e) =
+                                            responder.blocking_send(Ok(response.to_string()))
+                                        {
+                                            warn!("Failed to send response to channel: {e:?}");
+                                        }
+                                    }
+
+                                    Ok(())
+                                },
+                            ) {
+                                warn!("Failed to send request to luna service: {e:?}");
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to recv request: {e}");
+                        }
+                    }
+                }
+            });" 부분에서 오류가 나는 것 같은데 ... 내 utils/diagnosis.rs, utils/diagnosis/implement.rs, util.rs, filter/diagnosis.rs 부분을 수정할 필요가 있는 것 같아. 밑의 코드를 참고해서 4개의 파일에 대한 코드를 줘
+
+diagnosis말고 coop이라는 instance가 있는데 얘의 동작 방식을 참고 하는게 좋을 것 같아. 내가 처음에 OnceLock 을 쓴 이유가 그냥 얘 따라 한건데 뭔가 잘은 모르겠지만 이유가 있는 것 같기도 해 
+
+1. util/dashboard/coop/implement.rs
+
 "
-#[cfg(feature = "linux")]
-use crate::dbus::DbusServerBuilder;
-use crate::{basic_diagnosis::system, diagnosis_result::diagnosis_results, status::status};
-use clap::Parser;
+use super::{CoopDetailItem, CoopSummary};
+use anyhow::Result;
 use log::*;
-use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
-use platform_ipc_helper::blocking::data_manager;
-#[cfg(feature = "webos")]
-use platform_ipc_helper::{get_ls_handle, set_application_name};
-#[cfg(feature = "linux")]
-use tokio::runtime::Runtime;
+use platform_ipc_helper::sync::data_manager;
 
-mod basic_diagnosis;
-mod data_logging;
-mod db;
-#[cfg(feature = "linux")]
-mod dbus;
-mod diagnosis_actor;
-mod diagnosis_result;
-#[cfg(feature = "webos")]
-mod luna_service;
-mod register_app;
-mod report;
-mod status;
+#[derive(Default, Debug)]
+pub struct CoopImpl {}
 
-/// Diagnosis service
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    /// Name of the person to greet
-    #[arg(short, long, default_value = "/tmp")]
-    logging_path: String,
-}
+impl CoopImpl {
+    async fn get_summary_inner(&self) -> Result<CoopSummary> {
+        let idus = data_manager::facility::get_list_by_type(&"idu".into()).await?;
 
-fn main() {
-    pretty_env_logger::init();
-
-    let args = Args::parse();
-    data_logging::set_logging_path(args.logging_path.as_str());
-
-    #[cfg(feature = "webos")]
-    {
-        set_application_name("com.b2b.diagnosis.service");
-    }
-
-    if let Err(e) = db::init() {
-        error!("Failed to initialize db: {e}");
-        std::process::exit(1);
-    }
-
-    // 기본 진단 항목을 등록합니다.
-    // (CPU, 메모리, 저장소, 네트워크)
-    system().register().unwrap();
-
-    // 진단이 종료되었음을 알리기 위한 채널을 설정합니다.
-    let notify_handle = status().read().get_notify_sender();
-    diagnosis_results().set_status_notifier(notify_handle);
-
-    info!("Diagnosis service is starting");
-    // let _dbus_server = DbusServerBuilder::default().build().unwrap();
-    #[cfg(feature = "linux")]
-    let _dbus_server = Runtime::new().unwrap().block_on(async {
-        DbusServerBuilder.build().await.unwrap_or_else(|e| {
-            error!("Failed to build DbusServer: {e}");
-            std::process::exit(1)
-        })
-    });
-
-    #[cfg(feature = "webos")]
-    {
-        let handle = get_ls_handle().unwrap();
-        let luna_service = luna_service::LunaService::new(handle);
-        luna_service.run_background().unwrap();
-    }
-    info!("Diagnosis service is ready");
-
-    // cpu, usb, ram, disk 사용량을 읽어옵니다.
-
-    // system type facility를 가져옵니다.
-    
-    let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System);
-
-    //Vec<FacilityInfo> 에서 sytem id를 찾아서 system_facility에 저장합니다.
-    // system list 에서 name이 system인걸 찾아서, facility_id를 가져옵니다.
-    let system_facilities = match system_facilities_result {
-        Ok(facilities) => facilities,
-        Err(e) => {
-            error!("Failed to get system facilities: {e}");
-            std::process::exit(1);
-        }
-    };
-    let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
-    
-
-    // // 디버깅을 위해 각 facility 배열 및 id 출력
-    info!("system_facility: {system_facility:?}");
-
-    if let Some(facility) = system_facility {
-        for (cni, value) in &facility.cnis {
-            if let Some(usage_value) = value {
-                let usage = match usage_value.parse::<f32>() {
-                    Ok(usage) => usage,
-                    Err(e) => {
-                        warn!("parse {} usage failed: {e:?}", cni);
+        let mut coop_cnt = 0;
+        let mut comfort_sum = 0;
+        for idu in idus {
+            match idu.cnis.get("cooperAvail") {
+                Some(v) => {
+                    if v.iter().find(|v| *v == "on").is_none() {
                         continue;
                     }
-                };
-    
-                match cni.as_str() {
-                    "cpu0_usage" => system().add_cpu_usage(0, usage),
-                    "cpu1_usage" => system().add_cpu_usage(1, usage),
-                    "cpu2_usage" => system().add_cpu_usage(2, usage),
-                    "cpu3_usage" => system().add_cpu_usage(3, usage),
-                    "ram_usage" => system().add_memory_usage(usage),
-                    "disk_usage" => system().add_storage_usage(usage),
-                    "usb_usage" => system().add_usb_usage(usage),
-                    _ => info!("Unknown cni: {}", cni),
                 }
+                None => continue,
+            }
+
+            match idu.cnis.get("coopOper") {
+                Some(v) => {
+                    if v.iter().find(|v| *v == "on").is_none() {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+
+            match idu.cnis.get("coopStatus") {
+                Some(v) => {
+                    // cooperation이 없으면 스킵
+                    if v.iter().find(|v| *v == "cooperation").is_none() {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+
+            match idu.cnis.get("targetComfortLevel") {
+                Some(v) => match v {
+                    Some(v) => match v.parse::<u32>() {
+                        Ok(lv) => {
+                            comfort_sum += lv;
+                            coop_cnt += 1;
+                        }
+                        Err(e) => {
+                            error!("Failed to parse targetComfortLevel value: {e}");
+                            continue;
+                        }
+                    },
+                    None => continue,
+                },
+                None => continue,
+            }
+        }
+
+        // 0 - 2 good
+        // 2 - 3 normal
+        // 3 -   bad
+        let comfort_avg = if coop_cnt == 0 {
+            1
+        } else {
+            comfort_sum / coop_cnt
+        };
+
+        let average_comfort = if comfort_avg < 2 {
+            "good".to_string()
+        } else if comfort_avg < 3 {
+            "normal".to_string()
+        } else {
+            "bad".to_string()
+        };
+
+        Ok(CoopSummary {
+            average_comfort,
+            coop_control_operation: coop_cnt,
+        })
+    }
+
+    pub async fn get_summary(&self) -> CoopSummary {
+        match self.get_summary_inner().await {
+            Ok(s) => s,
+            Err(e) => {
+                error!("{e}");
+                CoopSummary::default()
             }
         }
     }
 
-    // 변경 시 처리할 함수를 등록합니다.
-    let mut filter = data_manager::facility::watch::FacilityFilter::default();
-    filter.facility_type = Some(FacilityType::System);
-    if let Err(e) = data_manager::facility::watch::cni_updated(filter, move |value| {
-        let cni_updated: CniUpdated = match serde_json::from_str(value) {
-            Ok(cni) => cni,
-            Err(e) => {
-                warn!("parse value updated failed: {e:?}");
-                return;
-            }
-        };
+    async fn get_detail_inner(&self) -> Result<Vec<CoopDetailItem>> {
+        let idus = data_manager::facility::get_list_by_type(&"idu".into()).await?;
 
-        // cni_updated에서 value를 가져옵니다.
-        let usage_value = cni_updated.value.clone(); // value 필드가 CniUpdated 구조체에 있어야 합니다.
+        let mut coop_cnt = 0;
+        let mut coop_list = vec![];
+        for idu in &idus {
+            match idu.cnis.get("cooperAvail") {
+                Some(v) => {
+                    if !v.iter().any(|v| *v == "on") {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
 
-        // usage_value를 f32로 파싱합니다.
-        let usage = match usage_value.parse::<f32>() {
-            Ok(usage) => usage,
-            Err(e) => {
-                warn!("parse {} usage failed: {e:?}", cni_updated.cni);
-                return;
+            match idu.cnis.get("coopOper") {
+                Some(v) => {
+                    if !v.iter().any(|v| *v == "on") {
+                        continue;
+                    }
+                }
+                None => continue,
             }
-        };
-        // 디버깅용 cni_updated 출력
-        info!("CNI updated: {cni_updated:?}");
-        match cni_updated.cni.as_str() {
-            "cpu0_usage" => {
-                system().add_cpu_usage(0, usage);
+
+            match idu.cnis.get("coopStatus") {
+                Some(v) => {
+                    // cooperation이 없으면 스킵
+                    if !v.iter().any(|v| *v == "cooperation") {
+                        continue;
+                    }
+                }
+                None => continue,
             }
-            "cpu1_usage" => {
-                system().add_cpu_usage(1, usage);
-            }
-            "cpu2_usage" => {
-                system().add_cpu_usage(2, usage);
-            }
-            "cpu3_usage" => {
-                system().add_cpu_usage(3, usage);
-            }
-            "ram_usage" => {
-                system().add_memory_usage(usage);
-            }
-            "disk_usage" => {
-                system().add_storage_usage(usage);
-            }
-            "usb_usage" => {
-                system().add_usb_usage(usage);
-            }
-            _ => {
-                info!("Unknown cni: {}", cni_updated.cni);
-                return;
-            }
+
+            let parent = match idu.parent_path.clone() {
+                Some(p) => match p.split('/').last() {
+                    Some(p) => p.to_string(),
+                    None => continue,
+                },
+                None => continue,
+            };
+
+            let comfort_level = match idu.cnis.get("targetComfortLevel") {
+                Some(Some(v)) => match v.parse::<u32>() {
+                    Ok(lv) => lv,
+                    Err(e) => {
+                        error!("Failed to parse targetComfortLevel value: {e}");
+                        continue;
+                    }
+                },
+                Some(None) => continue,
+                None => continue,
+            };
+
+            let target_addr = match idu.cnis.get("targetCoopAddr") {
+                Some(Some(v)) => match v.parse::<u32>() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        error!("Failed to parse targetComfortLevel value: {e}");
+                        continue;
+                    }
+                },
+                Some(None) => continue,
+                None => continue,
+            };
+
+            let target_idu = match idus.iter().find(|i| match i.extended_info.get("lgap") {
+                Some(e) => match e.get("address") {
+                    Some(a) => *a == target_addr,
+                    None => false,
+                },
+                None => false,
+            }) {
+                Some(t) => t.name.clone(),
+                None => continue,
+            };
+
+            coop_cnt += 1;
+            coop_list.push(CoopDetailItem {
+                index: coop_cnt,
+                odu: parent,
+                coop_idu: idu.name.clone(),
+                comfort_level,
+                target_idu,
+            })
         }
 
-        debug!("CNI updated: {cni_updated:?}");
-    }) {
-        error!("Failed to watch controlled point: {e}");
-        std::process::exit(1);
+        Ok(coop_list)
     }
 
-    std::thread::park();
+    pub async fn get_detail(&self) -> Vec<CoopDetailItem> {
+        match self.get_detail_inner().await {
+            Ok(s) => s,
+            Err(e) => {
+                error!("{e}");
+                vec![]
+            }
+        }
+    }
 }
-2. 값 처리 부분
+
 "
 
-"use chrono::Local;
+2.utils/dashboard/coop.rs
+
+"
 use log::*;
-use parking_lot::RwLock;
-use platform_ipc_helper::blocking::connection_manager;
-use std::{
-    collections::VecDeque,
-    sync::{Arc, OnceLock},
-};
+use std::sync::OnceLock;
 
-use anyhow::Result;
-use platform_common_types::diagnosis::{self, ReportApp, ReportItem, ReportPassFail, Severity};
+use serde::Serialize;
+use tokio::sync::Mutex;
 
-use crate::register_app::registered_apps;
+#[cfg(not(feature = "mock"))]
+pub mod implement;
+#[cfg(feature = "mock")]
+pub mod mock;
 
-static SYSTEM: OnceLock<System> = OnceLock::new();
+#[cfg(feature = "mock")]
+type CoopInterface = mock::CoopMock;
+#[cfg(not(feature = "mock"))]
+type CoopInterface = implement::CoopImpl;
 
-pub fn system() -> &'static System {
-    SYSTEM.get_or_init(Default::default)
+static COOP_INSTANCE: OnceLock<Mutex<CoopInterface>> = OnceLock::new();
+
+pub fn init_coop_instance() {
+    COOP_INSTANCE.get_or_init(Mutex::default);
 }
 
-#[derive(Debug)]
-pub struct System {
-    max_system_usage_cnt: usize,
-
-    // 최대 cpu 개수는 4개로 한다.
-    cpu0_usage: Arc<RwLock<VecDeque<f32>>>,
-    cpu1_usage: Arc<RwLock<VecDeque<f32>>>,
-    cpu2_usage: Arc<RwLock<VecDeque<f32>>>,
-    cpu3_usage: Arc<RwLock<VecDeque<f32>>>,
-
-    memory_usage: Arc<RwLock<VecDeque<f32>>>,
-    storage_usage: Arc<RwLock<VecDeque<f32>>>,
-    usb_usage: Arc<RwLock<VecDeque<f32>>>,
-}
-
-impl Default for System {
-    fn default() -> Self {
-        Self::new()
+pub fn coop_instance() -> &'static Mutex<CoopInterface> {
+    match COOP_INSTANCE.get() {
+        Some(c) => c,
+        None => {
+            error!("Failed to get coop instance. exit.");
+            std::process::exit(1);
+        }
     }
 }
 
-impl System {
-    pub fn new() -> Self {
-        Self {
-            max_system_usage_cnt: 5,
-            cpu0_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-            cpu1_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-            cpu2_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-            cpu3_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-            memory_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-            storage_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-            usb_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
-        }
-    }
-
-    pub fn register(&self) -> Result<()> {
-        let mut app = diagnosis::AppInfo {
-            name: "system".to_string(),
-            items: Vec::new(),
-        };
-
-        // CPU 5초 사용량 평균이 90% 이상이면 Fatal
-        let cpu = diagnosis::ItemInfo {
-            name: "cpu_usage_fatal".to_string(),
-            severity: Severity::Fatal,
-            expire_time: 5,
-        };
-        app.items.push(cpu);
-
-        // CPU 5초 사용량 평균이 70% 이상이면 Major
-        let cpu = diagnosis::ItemInfo {
-            name: "cpu_usage_warning".to_string(),
-            severity: Severity::Major,
-            expire_time: 5,
-        };
-        app.items.push(cpu);
-
-        // 메모리 사용량이 90% 이상이면 Fatal
-        let memory = diagnosis::ItemInfo {
-            name: "memory_usage_fatal".to_string(),
-            severity: Severity::Fatal,
-            expire_time: 5,
-        };
-        app.items.push(memory);
-
-        // 메모리 사용량이 70% 이상이면 Major
-        let memory = diagnosis::ItemInfo {
-            name: "memory_usage_warning".to_string(),
-            severity: Severity::Major,
-            expire_time: 5,
-        };
-        app.items.push(memory);
-
-        // 스토리지 사용량이 90% 이상이면 Fatal
-        let storage = diagnosis::ItemInfo {
-            name: "storage_usage_fatal".to_string(),
-            severity: Severity::Fatal,
-            expire_time: 5,
-        };
-        app.items.push(storage);
-
-        // 스토리지 사용량이 70% 이상이면 Major
-        let storage = diagnosis::ItemInfo {
-            name: "storage_usage_warning".to_string(),
-            severity: Severity::Major,
-            expire_time: 5,
-        };
-        app.items.push(storage);
-
-        // USB 사용량이 90% 이상이면 Fatal
-        let usb = diagnosis::ItemInfo {
-            name: "usb_usage_fatal".to_string(),
-            severity: Severity::Fatal,
-            expire_time: 5,
-        };
-        app.items.push(usb);
-
-        // USB 사용량이 70% 이상이면 Major
-        let usb = diagnosis::ItemInfo {
-            name: "usb_usage_warning".to_string(),
-            severity: Severity::Major,
-            expire_time: 5,
-        };
-        app.items.push(usb);
-
-        // 네트워크 연결 상태 확인
-        let connection = diagnosis::ItemInfo {
-            name: "connection".to_string(),
-            severity: Severity::Major,
-            expire_time: 5,
-        };
-        app.items.push(connection);
-
-        registered_apps()
-            .write()
-            .insert(app.name.clone(), app.into());
-
-        Ok(())
-    }
-
-    pub fn add_cpu_usage(&self, cpu_index: u32, usage: f32) {
-        info!("Add cpu usage: {usage} index: {cpu_index}");
-        let mut cpu_usage = match cpu_index {
-            0 => self.cpu0_usage.write(),
-            1 => self.cpu1_usage.write(),
-            2 => self.cpu2_usage.write(),
-            3 => self.cpu3_usage.write(),
-            _ => {
-                warn!("Invalid cpu index: {cpu_index}");
-                return;
-            }
-        };
-
-        if cpu_usage.len() == self.max_system_usage_cnt {
-            cpu_usage.pop_front();
-        }
-        cpu_usage.push_back(usage);
-    }
-
-    pub fn add_memory_usage(&self, usage: f32) {
-        let mut memory_usage = self.memory_usage.write();
-        if memory_usage.len() == self.max_system_usage_cnt {
-            memory_usage.pop_front();
-        }
-        memory_usage.push_back(usage);
-    }
-
-    pub fn add_storage_usage(&self, usage: f32) {
-        let mut storage_usage = self.storage_usage.write();
-        if storage_usage.len() == self.max_system_usage_cnt {
-            storage_usage.pop_front();
-        }
-        storage_usage.push_back(usage);
-    }
-
-    pub fn add_usb_usage(&self, usage: f32) {
-        let mut usb_usage = self.usb_usage.write();
-        if usb_usage.len() == self.max_system_usage_cnt {
-            usb_usage.pop_front();
-        }
-        usb_usage.push_back(usage);
-    }
-
-    pub fn get_report(&self) -> Result<ReportApp> {
-        let mut report = ReportApp::new("system");
-
-        self.diagnose_cpu(&mut report)?;
-        self.diagnose_memory(&mut report)?;
-        self.diagnose_storage(&mut report)?;
-        self.diagnose_usb(&mut report)?;
-        self.diagnose_network(&mut report)?;
-
-        Ok(report)
-    }
-
-    pub fn diagnose_cpu(&self, app: &mut ReportApp) -> Result<()> {
-        // cpu 사용량 평균을 구한다.
-        let cpu_usage = self.cpu0_usage.read();
-        let cpu_avg = cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32;
-        // 각각을 출력한다. 디버깅용
-        let len = cpu_usage.len();
-        info!("cpu total idx {len}");
-        for (i, usage) in cpu_usage.iter().enumerate() {
-            info!("CPU usage{i}: {usage}");
-        }
-    
-        info!("CPU avg: {cpu_avg}");
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if cpu_avg >= 90.0 {
-            result = ReportPassFail::Fail;
-            comment = "CPU usage is too high".to_string();
-        }
-        let item = ReportItem {
-            name: "cpu_usage_fatal".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-        if cpu_avg >= 70.0 {
-            result = ReportPassFail::Fail;
-            comment = "CPU usage is high".to_string();
-        }
-        let item = ReportItem {
-            name: "cpu_usage_warning".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        Ok(())
-    }
-
-    pub fn diagnose_memory(&self, app: &mut ReportApp) -> Result<()> {
-        // memory 사용량 평균을 구한다.
-        let memory_usage = system().memory_usage.read();
-        let memory_avg = memory_usage.iter().sum::<f32>() / memory_usage.len() as f32;
-
-        let len = memory_usage.len();
-        
-        info!("Memory usage: {memory_avg}");
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if memory_avg >= 90.0 {
-            result = ReportPassFail::Fail;
-            comment = "Memory usage is too high".to_string();
-        }
-        let item = ReportItem {
-            name: "memory_usage_fatal".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if memory_avg >= 70.0 {
-            result = ReportPassFail::Fail;
-            comment = "Memory usage is high".to_string();
-        }
-        let item = ReportItem {
-            name: "memory_usage_warning".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        Ok(())
-    }
-
-    pub fn diagnose_usb(&self, app: &mut ReportApp) -> Result<()> {
-        //usb 사용량을 구한다.
-        let usb_usage = system().usb_usage.read();
-        let usb_avg = usb_usage.iter().sum::<f32>() / usb_usage.len() as f32;
-
-        info!("USB usage: {usb_avg}");
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if usb_avg >= 90.0 {
-            result = ReportPassFail::Fail;
-            comment = "USB usage is too high".to_string();
-        }
-
-        let item = ReportItem {
-            name: "usb_usage_fatal".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if usb_avg >= 70.0 {
-            result = ReportPassFail::Fail;
-            comment = "USB usage is high".to_string();
-        }
-        let item = ReportItem {
-            name: "usb_usage_warning".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-        
-        Ok(())
-    }
-
-    pub fn diagnose_storage(&self, app: &mut ReportApp) -> Result<()> {
-        // storage 사용량 평균을 구한다.
-        let storage_usage = system().storage_usage.read();
-        let storage_avg = storage_usage.iter().sum::<f32>() / storage_usage.len() as f32;
-
-        info!("Storage usage: {storage_avg}");
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if storage_avg >= 90.0 {
-            result = ReportPassFail::Fail;
-            comment = "Storage usage is too high".to_string();
-        }
-        let item = ReportItem {
-            name: "storage_usage_fatal".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        let mut result = ReportPassFail::Pass;
-        let mut comment = "".to_string();
-
-        if storage_avg >= 70.0 {
-            result = ReportPassFail::Fail;
-            comment = "Storage usage is high".to_string();
-        }
-        let item = ReportItem {
-            name: "storage_usage_warning".to_string(),
-            result,
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        app.items.push(item);
-
-        Ok(())
-    }
-
-    pub fn diagnose_network(&self, app: &mut ReportApp) -> Result<()> {
-        let mut comment = String::new();
-
-        // ifconfig 명령어를 실행하여 이더넷 인터페이스의 상태를 확인한다.
-        // 이더넷 인터페이스가 없으면 Fatal로 처리한다.
-        let network_status = match connection_manager::get_status() {
-            Ok(_) => true,
-            Err(e) => {
-                warn!("Failed to get network status: {e}");
-                comment = format!("Failed to get network status: {e}");
-                false
-            }
-        };
-
-        let item = ReportItem {
-            name: "connection".to_string(),
-            result: if network_status {
-                ReportPassFail::Pass
-            } else {
-                ReportPassFail::Fail
-            },
-            comment,
-            published_time: Local::now().timestamp(),
-        };
-        info!("Network connection: {network_status}");
-        app.items.push(item);
-
-        Ok(())
-    }
-
-    // pub fn diagnose_wifi() -> Result<()> {
-    //     println!("Diagnosing wifi...");
-    //     Ok(())
-    // }
-    //
-    // pub fn diagnose_bluetooth() -> Result<()> {
-    //     println!("Diagnosing bluetooth...");
-    //     Ok(())
-    // }
-    //
-    // pub fn diagnose_usb() -> Result<()> {
-    //     println!("Diagnosing usb...");
-    //     Ok(())
-    // }
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoopSummary {
+    // 0 - 2 good
+    // 2 - 3 normal
+    // 3 -   bad
+    pub average_comfort: String,
+    pub coop_control_operation: u32,
 }
+
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoopDetailItem {
+    pub index: usize,
+    /// Odu 이름
+    pub odu: String,
+    /// 협조 Idu 이름
+    pub coop_idu: String,
+    /// AI엔진 target_comfort_level
+    pub comfort_level: u32,
+    /// 대상 idu 이름
+    pub target_idu: String,
+}
+
+"
+3. util/dashboard.rs
+"
+use airq::init_airq_instance;
+use co2::init_co2_instance;
+use comfort::init_comfort_instance;
+use coop::init_coop_instance;
+use refrigerant::init_refrigerant_instance;
+use smartcare::init_smartcare_instance;
+
+pub mod airq;
+pub mod co2;
+pub mod comfort;
+pub mod coop;
+pub mod refrigerant;
+pub mod smartcare;
+
+pub async fn init() {
+    init_coop_instance();
+    init_smartcare_instance();
+    init_co2_instance();
+    init_airq_instance();
+    init_comfort_instance();
+    init_refrigerant_instance();
+}
+
 "
