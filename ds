@@ -1,10 +1,13 @@
-register_cni_update_handler
+// CPU 사용량 조회
+pub(crate) fn get_cpu_usage(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "cpu")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::get_cpu_usage)
+}
 
-platform_ipc_helper::blocking::data_manager::facility::watch
-pub fn cni_updated<F>(filter: FacilityFilter, cb: F) -> Result<()>
-where
-    F: Fn(&str) + Send + Sync + 'static,
+`Result<impl Reply, Rejection>` is not a future
+the trait `warp::Future` is not implemented for `Result<impl Reply, Rejection>`, which is required by `Result<impl Reply, Rejection>: TryFuture`
+required for `Result<impl Reply, Rejection>` to implement `TryFuture`rustcClick for full compiler diagnostic
 
-init_cni_values
-platform_ipc_helper::blocking::data_manager::facility
-pub fn get_list_by_type(facility_type: &FacilityType) -> Result<Vec<FacilityInfo>>
