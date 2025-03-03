@@ -1,94 +1,8 @@
-1. diagnosis instance를 초기화 시키는 부분 -> utils.rs 
-
-"
-pub mod dashboard;
-pub mod diagnosis;
-
-pub async fn init() {
-    dashboard::init().await;
-    //초기화
-    println!("Initializing diagnosis instance...");
-    diagnosis::init_diagnosis_instance().await;
-}
-
-"
-
-2. diagnosis instance 정의 및 instance get, 초기화? -> utils/diagnosis.rs
-
-"
-//utils/diagnosis.rs
-use tokio::sync::Mutex; // tokio의 비동기 Mutex 사용
-use log::error;
-use serde::{Serialize, Deserialize};
-use once_cell::sync::OnceCell;
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Usage {
-    pub timestamp: String,
-    pub cpu_usage: f32,
-    pub ram_usage: f32,
-    pub storage: StorageInfo,
-    pub usb: UsbInfo,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CpuUsageRecord {
-    pub timestamp: u64,
-    pub usage: f32,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UsbInfo {
-    pub connected: bool,
-    pub total: Option<u64>,
-    pub used: Option<u64>,
-    pub usage: Option<f32>,
-}
-
-#[derive(Debug, Clone,Default,Serialize, Deserialize)]
-pub struct StorageInfo {
-    pub total: u64,
-    pub used: u64,
-    pub usage: f32,
-}
-
-pub fn get_current_timestamp() -> String {
-    let now = chrono::Utc::now();
-    now.to_rfc3339()
-}
-
-pub mod implement;
-// DiagnosisInterface 타입 정의
-pub type DiagnosisInterface = implement::DiagnosisImpl;
-
-pub static DIAGNOSIS_INSTANCE: OnceCell<Mutex<DiagnosisInterface>> = OnceCell::new();
-
-   pub async fn init_diagnosis_instance() {
-       if DIAGNOSIS_INSTANCE.get().is_none() {
-           DIAGNOSIS_INSTANCE
-               .set(Mutex::new(DiagnosisInterface::new()))
-               .expect("Failed to initialize DiagnosisImpl instance");
-       }
-   }
-
-   pub async fn diagnosis_instance() -> &'static Mutex<DiagnosisInterface> {
-       if let Some(instance) = DIAGNOSIS_INSTANCE.get() {
-           instance
-       } else {
-           error!("Diagnosis instance is not initialized!");
-           panic!("Diagnosis instance not initialized");
-       }
-   }
-"
-
-3. diagnosis INSTANCE 가 하는 일... 구현 모음 ( CPU, RAM 등 사용량 업데이트 및  CPU 30 동안의 사용량 저장 -> utils/diagnosis/implements.rs
-"
 //utils/diagnosis/implement.rs
 use std::sync::Arc;
 use std::collections::VecDeque;
 use platform_ipc_helper::blocking::data_manager; // 데이터 매니저를 사용하기 위해 추가
 use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
-use platform_common_types::core::facility::FacilityInfo;
 use crate::utils::diagnosis::{Usage, get_current_timestamp, StorageInfo,UsbInfo,CpuUsageRecord};
 use tokio::sync::Mutex; // tokio의 비동기 Mutex 사용
 use anyhow::Result;
@@ -96,9 +10,9 @@ use log::{error, warn, info, debug};
 
 #[derive(Debug, Default, Clone)]
 pub struct DiagnosisImpl {
-    resource_usage_history: Arc<Mutex<ResourceUsageHistory>>, // 리소스 사용 기록
-    cpu_usage_history: Arc<Mutex<VecDeque<CpuUsageRecord>>>, // CPU 사용량 기록
-}
+    resource_usage_history: Arc<Mutex<ResourceUsageHistory>>,
+    cpu_usage_history: Arc<Mutex<VecDeque<CpuUsageRecord>>>,
+ }
 
 #[derive(Debug, Clone, Default)]
 pub struct ResourceUsageHistory {
@@ -113,34 +27,28 @@ pub struct ResourceUsageHistory {
 }
 
 impl DiagnosisImpl {
-    pub async fn new() -> Self {
+    pub fn new() -> Self {
         let instance = DiagnosisImpl {
             resource_usage_history: Arc::new(Mutex::new(ResourceUsageHistory::default())),
-            cpu_usage_history: Arc::new(Mutex::new(VecDeque::with_capacity(30))), // 30초 동안의 CPU 사용량을 저장
+            cpu_usage_history: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
         };
-
-        instance.init_cni_values().await;
-        instance.register_cni_update_handler().await;
+        tokio::spawn(async {
+            instance.init_cni_values().await;
+            instance.register_cni_update_handler().await;
+        });
         instance
     }
 
     // 1. 가장 최근 모니터링된 Usage 값을 반환하는 함수
     pub async fn get_latest_usage(&self) -> Result<Usage> {
-        let history: tokio::sync::MutexGuard<'_, ResourceUsageHistory> = self.resource_usage_history.lock().await;
-
-        let latest_cpu_usage = history.cpu_values.last().cloned().unwrap_or(0.0);
-        let latest_ram_usage = history.ram_values.last().cloned().unwrap_or(0.0);
-        let usb_connected = history.usb_connected;
-
-        let usage = Usage {
+        let history = self.resource_usage_history.lock().await;
+        Ok(Usage {
             timestamp: get_current_timestamp(),
-            cpu_usage: latest_cpu_usage,
-            ram_usage: latest_ram_usage,
-            storage: StorageInfo::default(), // StorageInfo는 적절히 정의되어야 합니다.
-            usb: UsbInfo::default(), // UsbInfo는 적절히 정의되어야 합니다.
-        };
-
-        Ok(usage)
+            cpu_usage: history.cpu_values.last().cloned().unwrap_or(0.0),
+            ram_usage: history.ram_values.last().cloned().unwrap_or(0.0),
+            storage: StorageInfo::default(),
+            usb: UsbInfo::default(),
+        })
     }
 
     // 2. CPU의 30초 동안의 변화 값을 반환하는 함수
@@ -148,36 +56,32 @@ impl DiagnosisImpl {
         let cpu_usage_history = self.cpu_usage_history.lock().await;
         Ok(cpu_usage_history.iter().cloned().collect())
     }
-
-    pub async fn update_usage_history(&self, cpu: Option<f32>, ram: Option<f32>, storage: Option<f32>, usb: Option<f32>) {
-        let mut history = self.resource_usage_history.lock().await;
-
-        // 현재 타임스탬프를 기록
-        let current_timestamp = get_current_timestamp().parse::<u64>().unwrap_or(0);
-        history.timestamps.push(current_timestamp.to_string());
-
-        // CPU 사용량 업데이트
-        if let Some(cpu_value) = cpu {
-            let mut cpu_history = self.cpu_usage_history.lock().await;
-            if cpu_history.len() == 30 {
-                cpu_history.pop_front(); // 30초가 넘으면 가장 오래된 값을 제거
-            }
-            cpu_history.push_back(CpuUsageRecord { timestamp: current_timestamp, usage: cpu_value }); // 새로운 CPU 사용량 추가
-            history.cpu_values.push(cpu_value); // 전체 기록에도 추가
+    
+   pub async fn update_usage_history(&self, cpu: Option<f32>, ram: Option<f32>, storage: Option<f32>, usb: Option<f32>) {
+    let mut history = self.resource_usage_history.lock().await;
+    let current_timestamp = chrono::Utc::now().timestamp() as u64;
+    history.timestamps.push(current_timestamp.to_string());
+    if let Some(cpu_value) = cpu {
+        let mut cpu_history = self.cpu_usage_history.lock().await;
+        if cpu_history.len() == 30 {
+            cpu_history.pop_front();
         }
-
-        // RAM, Storage, USB 사용량 업데이트
-        if let Some(ram_value) = ram {
-            history.ram_values.push(ram_value);
-        }
-        if let Some(storage_value) = storage {
-            history.storage_values.push(storage_value);
-        }
-        if let Some(usb_value) = usb {
-            history.usb_values.push(usb_value);
-            history.usb_connected = usb_value > 0.0; // USB 연결 상태 업데이트
+        cpu_history.push_back(CpuUsageRecord { timestamp: current_timestamp, usage: cpu_value });
+        history.cpu_values.push(cpu_value);
+    }
+    if let Some(ram_value) = ram {
+        history.ram_values.push(ram_value);
+    }
+    if let Some(storage_value) = storage {
+        history.storage_values.push(storage_value);
+    }
+    if let Some(usb_value) = usb {
+        history.usb_values.push(usb_value);
+        history.usb_connected = usb_value > 0.0;
         }
     }
+
+
 
     async fn init_cni_values(&self) {
         info!("init_cni_values-----------------");
@@ -327,4 +231,3 @@ impl DiagnosisImpl {
 
     
 }
-"
