@@ -1,160 +1,57 @@
-use std::sync::{Arc, Mutex};
-use std::collections::VecDeque;
-use chrono::Utc;
-use platform_ipc_helper::blocking::data_manager;
-use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
-use serde::de;
-use crate::utils::diagnosis::{Usage, get_current_timestamp, StorageInfo, UsbInfo, CpuUsageRecord};
-use log::{error, warn, info, debug};
-#[derive(Debug, Default, Clone)]
-pub struct DiagnosisImpl {
-    resource_usage_history: Mutex<ResourceUsageHistory>,
-    cpu_usage_history: Mutex<VecDeque<CpuUsageRecord>>,
- }
- 
-#[derive(Debug, Clone, Default)]
-pub struct ResourceUsageHistory {
-   pub timestamps: Vec<String>,
-   pub cpu_values: Vec<f32>,
-   pub ram_values: Vec<f32>,
-   pub storage_values: Vec<f32>,
-   pub usb_values: Vec<f32>,
-   pub disk_total_space: u64,
-   pub usb_total_space: u64,
-   pub usb_connected: bool,
-}
-impl DiagnosisImpl {
-    pub fn new() -> Arc<Self> {
-        let instance = Arc::new(DiagnosisImpl {
-            resource_usage_history: Mutex::new(ResourceUsageHistory::default()),
-            cpu_usage_history: Mutex::new(VecDeque::with_capacity(30)),
-        });
-        // `Arc` 복사해서 init 및 register 실행
-        let instance_clone = Arc::clone(&instance);
-        instance_clone.init_cni_values();
-        instance_clone.register_cni_update_handler();
-        instance
-    }
-   pub fn get_latest_usage(&self) -> Usage {
-       let history = self.resource_usage_history.lock().unwrap();
-       Usage {
-           timestamp: get_current_timestamp(),
-           cpu_usage: *history.cpu_values.last().unwrap_or(&0.0),
-           ram_usage: *history.ram_values.last().unwrap_or(&0.0),
-           storage: StorageInfo::default(),
-           usb: UsbInfo::default(),
-       }
-   }
-   pub fn get_cpu_usage_history(&self) -> Vec<CpuUsageRecord> {
-       let cpu_usage_history = self.cpu_usage_history.lock().unwrap();
-       cpu_usage_history.iter().cloned().collect()
-   }
-   pub fn update_usage_history(
-&self,
-       cpu: Option<f32>,
-       ram: Option<f32>,
-       storage: Option<f32>,
-       usb: Option<f32>,
-   ) {
-       let mut history = self.resource_usage_history.lock().unwrap();
-       let current_timestamp = Utc::now().timestamp() as u64;
-       history.timestamps.push(current_timestamp.to_string());
-       if let Some(cpu_value) = cpu {
-           let mut cpu_history = self.cpu_usage_history.lock().unwrap();
-           if cpu_history.len() == 30 {
-               cpu_history.pop_front();
-           }
-           cpu_history.push_back(CpuUsageRecord { timestamp: current_timestamp, usage: cpu_value });
-           history.cpu_values.push(cpu_value);
-       }
-       if let Some(ram_value) = ram {
-           history.ram_values.push(ram_value);
-       }
-       if let Some(storage_value) = storage {
-           history.storage_values.push(storage_value);
-       }
-       if let Some(usb_value) = usb {
-           history.usb_values.push(usb_value);
-           history.usb_connected = usb_value > 0.0;
-       }
-   }
-   fn init_cni_values(&self) {
-        info!("Initializing CNI values...");
-       let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System);
-       let system_facilities = match system_facilities_result {
-           Ok(facilities) => facilities,
-           Err(e) => {
-               error!("Failed to get system facilities: {e}");
-               return;
-           }
-       };
-       let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
-       if let Some(facility) = system_facility {
-           for (cni, value) in &facility.cnis {
-               if let Some(usage_value) = value {
-                   let usage = match usage_value.parse::<f32>() {
-                       Ok(usage) => usage,
-                       Err(e) => {
-                           warn!("parse {} usage failed: {e:?}", cni);
-                           continue;
-                       }
-                   };
-                   info!("Initializing CNI value: {cni} - {usage}");
-                   match cni.as_str() {
-                       "cpu0_usage" | "cpu1_usage" | "cpu2_usage" | "cpu3_usage" => self.update_usage_history(Some(usage), None, None, None),
-                       "ram_usage" => self.update_usage_history(None, Some(usage), None, None),
-                       "disk_usage" => self.update_usage_history(None, None, Some(usage), None),
-                       "disk_total_space" => {
-                           let mut history = self.resource_usage_history.lock().unwrap();
-                           history.disk_total_space = usage as u64;
-                       }
-                       "usb_usage" => self.update_usage_history(None, None, None, Some(usage)),
-                        "usb_total_space" => {
-                            let mut history = self.resource_usage_history.lock().unwrap();
-                            history.usb_total_space = usage as u64;
-                          }
-                       _ => warn!("Unknown CNI: {cni}"),
-                   }
-               }
-           }
-       }
-   }
+//utils/diagnosis.rs
+use std::sync::{Mutex, Once};
+use log::error;
+use serde::{Serialize, Deserialize};
+use once_cell::sync::OnceCell;
 
-      fn register_cni_update_handler(self: Arc<Self>) {
-        info!("Registering CNI update handler...");
-        let mut filter = data_manager::facility::watch::FacilityFilter::default();
-        filter.facility_type = Some(FacilityType::System);
-        let instance_clone = Arc::clone(&self);
-        if let Err(e) = data_manager::facility::watch::cni_updated(filter, move |value| {
-            let instance = instance_clone.as_ref();
-            let cni_updated: CniUpdated = match serde_json::from_str(value) {
-                Ok(cni) => cni,
-                Err(e) => {
-                    error!("Failed to parse CNI updated message: {e}");
-                    return;
-                }
-            };
-            let usage = match cni_updated.value.parse::<f32>() {
-                Ok(usage) => usage,
-                Err(e) => {
-                    warn!("parse {} usage failed: {e:?}", cni_updated.cni);
-                    return;
-                }
-            };
-            info!("CNI updated: {cni_updated:?} - {usage}");
-            match cni_updated.cni.as_str() {
-                "cpu0_usage" | "cpu1_usage" | "cpu2_usage" | "cpu3_usage" => instance.update_usage_history(Some(usage), None, None, None),
-                "ram_usage" => instance.update_usage_history(None, Some(usage), None, None),
-                "disk_usage" => instance.update_usage_history(None, None, Some(usage), None),
-                "usb_usage" => instance.update_usage_history(None, None, None, Some(usage)),
-                _ => warn!("Unknown CNI: {cni_updated:?}"),
-            }
-        }) {
-            error!("Failed to register CNI updated handler: {:?}", e);
-        }
-    }
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Usage {
+    pub timestamp: String,
+    pub cpu_usage: f32,
+    pub ram_usage: f32,
+    pub storage: StorageInfo,
+    pub usb: UsbInfo,
 }
 
-the trait bound `std::sync::Mutex<ResourceUsageHistory>: Clone` is not satisfied
-the trait `Clone` is not implemented for `std::sync::Mutex<ResourceUsageHistory>`rustcClick for full compiler diagnostic
-implement.rs(9, 26): Error originated from macro call here
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CpuUsageRecord {
+    pub timestamp: u64,
+    pub usage: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsbInfo {
+    pub connected: bool,
+    pub total: Option<u64>,
+    pub used: Option<u64>,
+    pub usage: Option<f32>,
+}
+
+#[derive(Debug, Clone,Default,Serialize, Deserialize)]
+pub struct StorageInfo {
+    pub total: u64,
+    pub used: u64,
+    pub usage: f32,
+}
+
+pub fn get_current_timestamp() -> String {
+    let now = chrono::Utc::now();
+    now.to_rfc3339()
+}
+
+pub mod implement;
+// DiagnosisInterface 타입 정의
+pub type DiagnosisInterface = implement::DiagnosisImpl;
+
+static DIAGNOSIS_INSTANCE: OnceCell<Mutex<DiagnosisInterface>> = OnceCell::new();
+static INIT: Once = Once::new();
+pub fn init_diagnosis_instance() {
+   INIT.call_once(|| {
+       DIAGNOSIS_INSTANCE
+           .set(Mutex::new(DiagnosisInterface::new()))
+           .expect("Failed to initialize DiagnosisImpl instance");
+   });
+}
+pub fn diagnosis_instance() -> &'static Mutex<DiagnosisInterface> {
+   DIAGNOSIS_INSTANCE.get().expect("Diagnosis instance is not initialized!")
+}
