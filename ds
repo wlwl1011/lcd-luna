@@ -1,80 +1,41 @@
-" INFO  rest_server::utils::diagnosis::implement > Registering CNI update handler...                                                                                                     
- DEBUG moonlight::blocking                      > Received watch request to luna service                                                                                                
- DEBUG moonlight::sync                          > Spawning luna service thread                                                                                                          
-thread '<unnamed>' panicked at /root/.cargo/registry/src/index.crates.io-6f17d22bba15001f/glib-0.18.5/src/main_context_futures.rs:562:14:                                               
-Spawning local futures only allowed on the thread owning the MainContext: BoolError { message: "Failed to acquire ownership of main context, already acquired by another thread", filen}
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace" 
+내가 참고한 부분의 코드는 이런식으로 별도의 tx,rx 이런거 없이 잘했는데 왜 나는 안되는거야? 나도 이 코드들을 최대한 참고해서 하면 tx, rx 안 써도 되는 거 아닌가? 
 
-실행시키면 다음과 같은 오류가 나..
-
-아마도 Registering CNI update handler... 부분에서 오류가 나는 것 같은데 ... register_cni_update_handler 부분에서 문제가 될만한 부분이 있을까?? 
-
+1. main 함수 부분
 "
-//utils/diagnosis.rs
-use std::sync::{Arc, Once};
-use log::error;
-use serde::{Serialize, Deserialize};
-use once_cell::sync::OnceCell;
+#[cfg(feature = "linux")]
+use crate::dbus::DbusServerBuilder;
+use crate::{basic_diagnosis::system, diagnosis_result::diagnosis_results, status::status};
+use clap::Parser;
+use log::*;
+use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
+use platform_ipc_helper::blocking::data_manager;
+#[cfg(feature = "webos")]
+use platform_ipc_helper::{get_ls_handle, set_application_name};
+#[cfg(feature = "linux")]
+use tokio::runtime::Runtime;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Usage {
-    pub timestamp: String,
-    pub cpu_usage: f32,
-    pub ram_usage: f32,
-    pub storage: StorageInfo,
-    pub usb: UsbInfo,
+mod basic_diagnosis;
+mod data_logging;
+mod db;
+#[cfg(feature = "linux")]
+mod dbus;
+mod diagnosis_actor;
+mod diagnosis_result;
+#[cfg(feature = "webos")]
+mod luna_service;
+mod register_app;
+mod report;
+mod status;
+
+/// Diagnosis service
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Name of the person to greet
+    #[arg(short, long, default_value = "/tmp")]
+    logging_path: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CpuUsageRecord {
-    pub timestamp: u64,
-    pub usage: f32,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UsbInfo {
-    pub connected: bool,
-    pub total: Option<u64>,
-    pub used: Option<u64>,
-    pub usage: Option<f32>,
-}
-
-#[derive(Debug, Clone,Default,Serialize, Deserialize)]
-pub struct StorageInfo {
-    pub total: u64,
-    pub used: u64,
-    pub usage: f32,
-}
-
-pub fn get_current_timestamp() -> String {
-    let now = chrono::Utc::now();
-    now.to_rfc3339()
-}
-
-pub mod implement;
-// DiagnosisInterface 타입 정의
-pub type DiagnosisInterface = implement::DiagnosisImpl;
-
-/// **📌 전역 인스턴스 (`OnceCell<Arc<T>>` 사용)**
-static DIAGNOSIS_INSTANCE: OnceCell<Arc<DiagnosisInterface>> = OnceCell::new();
-static INIT: Once = Once::new();
-/// **📌 DiagnosisInstance 초기화 함수**
-pub fn init_diagnosis_instance() {
-   INIT.call_once(|| {
-       let instance = DiagnosisInterface::new(); // `new()` 호출
-       DIAGNOSIS_INSTANCE
-           .set(instance)
-           .expect("Failed to initialize DiagnosisImpl instance");
-   });
-}
-/// **📌 DiagnosisInstance 가져오기**
-pub fn diagnosis_instance() -> Arc<DiagnosisInterface> {
-   DIAGNOSIS_INSTANCE.get().expect("Diagnosis instance is not initialized!").clone()
-}
-"
-
-근데 나는 해당 register_cni_update_handler 함수의 내용을 다른 함수에 있는 부분을 그래도 가져다 쓰고, 값을 저장하는 부분만 우리꺼에 맞춰서 수정한거거든 ..
-"
 fn main() {
     pretty_env_logger::init();
 
@@ -223,5 +184,416 @@ fn main() {
     }
 
     std::thread::park();
+}
+2. 값 처리 부분
+"
+
+"use chrono::Local;
+use log::*;
+use parking_lot::RwLock;
+use platform_ipc_helper::blocking::connection_manager;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, OnceLock},
+};
+
+use anyhow::Result;
+use platform_common_types::diagnosis::{self, ReportApp, ReportItem, ReportPassFail, Severity};
+
+use crate::register_app::registered_apps;
+
+static SYSTEM: OnceLock<System> = OnceLock::new();
+
+pub fn system() -> &'static System {
+    SYSTEM.get_or_init(Default::default)
+}
+
+#[derive(Debug)]
+pub struct System {
+    max_system_usage_cnt: usize,
+
+    // 최대 cpu 개수는 4개로 한다.
+    cpu0_usage: Arc<RwLock<VecDeque<f32>>>,
+    cpu1_usage: Arc<RwLock<VecDeque<f32>>>,
+    cpu2_usage: Arc<RwLock<VecDeque<f32>>>,
+    cpu3_usage: Arc<RwLock<VecDeque<f32>>>,
+
+    memory_usage: Arc<RwLock<VecDeque<f32>>>,
+    storage_usage: Arc<RwLock<VecDeque<f32>>>,
+    usb_usage: Arc<RwLock<VecDeque<f32>>>,
+}
+
+impl Default for System {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl System {
+    pub fn new() -> Self {
+        Self {
+            max_system_usage_cnt: 5,
+            cpu0_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+            cpu1_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+            cpu2_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+            cpu3_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+            memory_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+            storage_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+            usb_usage: Arc::new(RwLock::new(VecDeque::with_capacity(5))),
+        }
+    }
+
+    pub fn register(&self) -> Result<()> {
+        let mut app = diagnosis::AppInfo {
+            name: "system".to_string(),
+            items: Vec::new(),
+        };
+
+        // CPU 5초 사용량 평균이 90% 이상이면 Fatal
+        let cpu = diagnosis::ItemInfo {
+            name: "cpu_usage_fatal".to_string(),
+            severity: Severity::Fatal,
+            expire_time: 5,
+        };
+        app.items.push(cpu);
+
+        // CPU 5초 사용량 평균이 70% 이상이면 Major
+        let cpu = diagnosis::ItemInfo {
+            name: "cpu_usage_warning".to_string(),
+            severity: Severity::Major,
+            expire_time: 5,
+        };
+        app.items.push(cpu);
+
+        // 메모리 사용량이 90% 이상이면 Fatal
+        let memory = diagnosis::ItemInfo {
+            name: "memory_usage_fatal".to_string(),
+            severity: Severity::Fatal,
+            expire_time: 5,
+        };
+        app.items.push(memory);
+
+        // 메모리 사용량이 70% 이상이면 Major
+        let memory = diagnosis::ItemInfo {
+            name: "memory_usage_warning".to_string(),
+            severity: Severity::Major,
+            expire_time: 5,
+        };
+        app.items.push(memory);
+
+        // 스토리지 사용량이 90% 이상이면 Fatal
+        let storage = diagnosis::ItemInfo {
+            name: "storage_usage_fatal".to_string(),
+            severity: Severity::Fatal,
+            expire_time: 5,
+        };
+        app.items.push(storage);
+
+        // 스토리지 사용량이 70% 이상이면 Major
+        let storage = diagnosis::ItemInfo {
+            name: "storage_usage_warning".to_string(),
+            severity: Severity::Major,
+            expire_time: 5,
+        };
+        app.items.push(storage);
+
+        // USB 사용량이 90% 이상이면 Fatal
+        let usb = diagnosis::ItemInfo {
+            name: "usb_usage_fatal".to_string(),
+            severity: Severity::Fatal,
+            expire_time: 5,
+        };
+        app.items.push(usb);
+
+        // USB 사용량이 70% 이상이면 Major
+        let usb = diagnosis::ItemInfo {
+            name: "usb_usage_warning".to_string(),
+            severity: Severity::Major,
+            expire_time: 5,
+        };
+        app.items.push(usb);
+
+        // 네트워크 연결 상태 확인
+        let connection = diagnosis::ItemInfo {
+            name: "connection".to_string(),
+            severity: Severity::Major,
+            expire_time: 5,
+        };
+        app.items.push(connection);
+
+        registered_apps()
+            .write()
+            .insert(app.name.clone(), app.into());
+
+        Ok(())
+    }
+
+    pub fn add_cpu_usage(&self, cpu_index: u32, usage: f32) {
+        info!("Add cpu usage: {usage} index: {cpu_index}");
+        let mut cpu_usage = match cpu_index {
+            0 => self.cpu0_usage.write(),
+            1 => self.cpu1_usage.write(),
+            2 => self.cpu2_usage.write(),
+            3 => self.cpu3_usage.write(),
+            _ => {
+                warn!("Invalid cpu index: {cpu_index}");
+                return;
+            }
+        };
+
+        if cpu_usage.len() == self.max_system_usage_cnt {
+            cpu_usage.pop_front();
+        }
+        cpu_usage.push_back(usage);
+    }
+
+    pub fn add_memory_usage(&self, usage: f32) {
+        let mut memory_usage = self.memory_usage.write();
+        if memory_usage.len() == self.max_system_usage_cnt {
+            memory_usage.pop_front();
+        }
+        memory_usage.push_back(usage);
+    }
+
+    pub fn add_storage_usage(&self, usage: f32) {
+        let mut storage_usage = self.storage_usage.write();
+        if storage_usage.len() == self.max_system_usage_cnt {
+            storage_usage.pop_front();
+        }
+        storage_usage.push_back(usage);
+    }
+
+    pub fn add_usb_usage(&self, usage: f32) {
+        let mut usb_usage = self.usb_usage.write();
+        if usb_usage.len() == self.max_system_usage_cnt {
+            usb_usage.pop_front();
+        }
+        usb_usage.push_back(usage);
+    }
+
+    pub fn get_report(&self) -> Result<ReportApp> {
+        let mut report = ReportApp::new("system");
+
+        self.diagnose_cpu(&mut report)?;
+        self.diagnose_memory(&mut report)?;
+        self.diagnose_storage(&mut report)?;
+        self.diagnose_usb(&mut report)?;
+        self.diagnose_network(&mut report)?;
+
+        Ok(report)
+    }
+
+    pub fn diagnose_cpu(&self, app: &mut ReportApp) -> Result<()> {
+        // cpu 사용량 평균을 구한다.
+        let cpu_usage = self.cpu0_usage.read();
+        let cpu_avg = cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32;
+        // 각각을 출력한다. 디버깅용
+        let len = cpu_usage.len();
+        info!("cpu total idx {len}");
+        for (i, usage) in cpu_usage.iter().enumerate() {
+            info!("CPU usage{i}: {usage}");
+        }
+    
+        info!("CPU avg: {cpu_avg}");
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if cpu_avg >= 90.0 {
+            result = ReportPassFail::Fail;
+            comment = "CPU usage is too high".to_string();
+        }
+        let item = ReportItem {
+            name: "cpu_usage_fatal".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+        if cpu_avg >= 70.0 {
+            result = ReportPassFail::Fail;
+            comment = "CPU usage is high".to_string();
+        }
+        let item = ReportItem {
+            name: "cpu_usage_warning".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        Ok(())
+    }
+
+    pub fn diagnose_memory(&self, app: &mut ReportApp) -> Result<()> {
+        // memory 사용량 평균을 구한다.
+        let memory_usage = system().memory_usage.read();
+        let memory_avg = memory_usage.iter().sum::<f32>() / memory_usage.len() as f32;
+
+        let len = memory_usage.len();
+        
+        info!("Memory usage: {memory_avg}");
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if memory_avg >= 90.0 {
+            result = ReportPassFail::Fail;
+            comment = "Memory usage is too high".to_string();
+        }
+        let item = ReportItem {
+            name: "memory_usage_fatal".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if memory_avg >= 70.0 {
+            result = ReportPassFail::Fail;
+            comment = "Memory usage is high".to_string();
+        }
+        let item = ReportItem {
+            name: "memory_usage_warning".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        Ok(())
+    }
+
+    pub fn diagnose_usb(&self, app: &mut ReportApp) -> Result<()> {
+        //usb 사용량을 구한다.
+        let usb_usage = system().usb_usage.read();
+        let usb_avg = usb_usage.iter().sum::<f32>() / usb_usage.len() as f32;
+
+        info!("USB usage: {usb_avg}");
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if usb_avg >= 90.0 {
+            result = ReportPassFail::Fail;
+            comment = "USB usage is too high".to_string();
+        }
+
+        let item = ReportItem {
+            name: "usb_usage_fatal".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if usb_avg >= 70.0 {
+            result = ReportPassFail::Fail;
+            comment = "USB usage is high".to_string();
+        }
+        let item = ReportItem {
+            name: "usb_usage_warning".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+        
+        Ok(())
+    }
+
+    pub fn diagnose_storage(&self, app: &mut ReportApp) -> Result<()> {
+        // storage 사용량 평균을 구한다.
+        let storage_usage = system().storage_usage.read();
+        let storage_avg = storage_usage.iter().sum::<f32>() / storage_usage.len() as f32;
+
+        info!("Storage usage: {storage_avg}");
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if storage_avg >= 90.0 {
+            result = ReportPassFail::Fail;
+            comment = "Storage usage is too high".to_string();
+        }
+        let item = ReportItem {
+            name: "storage_usage_fatal".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        let mut result = ReportPassFail::Pass;
+        let mut comment = "".to_string();
+
+        if storage_avg >= 70.0 {
+            result = ReportPassFail::Fail;
+            comment = "Storage usage is high".to_string();
+        }
+        let item = ReportItem {
+            name: "storage_usage_warning".to_string(),
+            result,
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        app.items.push(item);
+
+        Ok(())
+    }
+
+    pub fn diagnose_network(&self, app: &mut ReportApp) -> Result<()> {
+        let mut comment = String::new();
+
+        // ifconfig 명령어를 실행하여 이더넷 인터페이스의 상태를 확인한다.
+        // 이더넷 인터페이스가 없으면 Fatal로 처리한다.
+        let network_status = match connection_manager::get_status() {
+            Ok(_) => true,
+            Err(e) => {
+                warn!("Failed to get network status: {e}");
+                comment = format!("Failed to get network status: {e}");
+                false
+            }
+        };
+
+        let item = ReportItem {
+            name: "connection".to_string(),
+            result: if network_status {
+                ReportPassFail::Pass
+            } else {
+                ReportPassFail::Fail
+            },
+            comment,
+            published_time: Local::now().timestamp(),
+        };
+        info!("Network connection: {network_status}");
+        app.items.push(item);
+
+        Ok(())
+    }
+
+    // pub fn diagnose_wifi() -> Result<()> {
+    //     println!("Diagnosing wifi...");
+    //     Ok(())
+    // }
+    //
+    // pub fn diagnose_bluetooth() -> Result<()> {
+    //     println!("Diagnosing bluetooth...");
+    //     Ok(())
+    // }
+    //
+    // pub fn diagnose_usb() -> Result<()> {
+    //     println!("Diagnosing usb...");
+    //     Ok(())
+    // }
 }
 "
