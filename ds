@@ -1,3 +1,311 @@
+//utils/diagnosis.rs
+use tokio::sync::Mutex; // tokio의 비동기 Mutex 사용
+use log::error;
+use std::sync::OnceLock;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Usage {
+    pub timestamp: String,
+    pub cpu_usage: f32,
+    pub ram_usage: f32,
+    pub storage: StorageInfo,
+    pub usb: UsbInfo,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CpuUsageRecord {
+    pub timestamp: u64,
+    pub usage: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsbInfo {
+    pub connected: bool,
+    pub total: Option<u64>,
+    pub used: Option<u64>,
+    pub usage: Option<f32>,
+}
+
+#[derive(Debug, Clone,Default,Serialize, Deserialize)]
+pub struct StorageInfo {
+    pub total: u64,
+    pub used: u64,
+    pub usage: f32,
+}
+
+pub fn get_current_timestamp() -> String {
+    let now = chrono::Utc::now();
+    now.to_rfc3339()
+}
+
+pub mod implement;
+// DiagnosisInterface 타입 정의
+pub type DiagnosisInterface = implement::DiagnosisImpl;
+
+// 전역 인스턴스
+static DIAGNOSIS_INSTANCE: OnceLock<Mutex<DiagnosisInterface>> = OnceLock::new();
+
+pub fn init_diagnosis_instance() {
+    DIAGNOSIS_INSTANCE.get_or_init(Mutex::default);
+}
+
+pub fn diagnosis_instance() -> &'static Mutex<DiagnosisInterface> {
+    match DIAGNOSIS_INSTANCE.get() {
+        Some(c) => c,
+        None => {
+            error!("Failed to get diagnosis instance. exit.");
+            std::process::exit(1);
+        }
+    }
+}
+
+
+//utils/diagnosis/implement.rs
+use std::sync::Arc;
+use std::collections::VecDeque;
+use platform_ipc_helper::blocking::data_manager; // 데이터 매니저를 사용하기 위해 추가
+use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
+use platform_common_types::core::facility::FacilityInfo;
+use crate::utils::diagnosis::{Usage, get_current_timestamp, StorageInfo,UsbInfo,CpuUsageRecord};
+use tokio::sync::Mutex; // tokio의 비동기 Mutex 사용
+use anyhow::Result;
+use log::{error, warn, info, debug};
+
+#[derive(Debug, Default, Clone)]
+pub struct DiagnosisImpl {
+    resource_usage_history: Arc<Mutex<ResourceUsageHistory>>, // 리소스 사용 기록
+    cpu_usage_history: Arc<Mutex<VecDeque<CpuUsageRecord>>>, // CPU 사용량 기록
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ResourceUsageHistory {
+    pub timestamps: Vec<String>,
+    pub cpu_values: Vec<f32>,
+    pub ram_values: Vec<f32>,
+    pub storage_values: Vec<f32>,
+    pub usb_values: Vec<f32>,
+    pub disk_total_space: u64,
+    pub usb_total_space: u64,
+    pub usb_connected: bool,
+}
+
+impl DiagnosisImpl {
+    pub async fn new() -> Self {
+        let instance = DiagnosisImpl {
+            resource_usage_history: Arc::new(Mutex::new(ResourceUsageHistory::default())),
+            cpu_usage_history: Arc::new(Mutex::new(VecDeque::with_capacity(30))), // 30초 동안의 CPU 사용량을 저장
+        };
+
+        instance.init_cni_values().await;
+        instance.register_cni_update_handler().await;
+        instance
+    }
+
+    // 1. 가장 최근 모니터링된 Usage 값을 반환하는 함수
+    pub async fn get_latest_usage(&self) -> Result<Usage> {
+        let history: tokio::sync::MutexGuard<'_, ResourceUsageHistory> = self.resource_usage_history.lock().await;
+
+        let latest_cpu_usage = history.cpu_values.last().cloned().unwrap_or(0.0);
+        let latest_ram_usage = history.ram_values.last().cloned().unwrap_or(0.0);
+        let usb_connected = history.usb_connected;
+
+        let usage = Usage {
+            timestamp: get_current_timestamp(),
+            cpu_usage: latest_cpu_usage,
+            ram_usage: latest_ram_usage,
+            storage: StorageInfo::default(), // StorageInfo는 적절히 정의되어야 합니다.
+            usb: UsbInfo::default(), // UsbInfo는 적절히 정의되어야 합니다.
+        };
+
+        Ok(usage)
+    }
+
+    // 2. CPU의 30초 동안의 변화 값을 반환하는 함수
+    pub async fn get_cpu_usage_history(&self) -> Result<Vec<CpuUsageRecord>> {
+        let cpu_usage_history = self.cpu_usage_history.lock().await;
+        Ok(cpu_usage_history.iter().cloned().collect())
+    }
+
+    pub async fn update_usage_history(&self, cpu: Option<f32>, ram: Option<f32>, storage: Option<f32>, usb: Option<f32>) {
+        let mut history = self.resource_usage_history.lock().await;
+
+        // 현재 타임스탬프를 기록
+        let current_timestamp = get_current_timestamp().parse::<u64>().unwrap_or(0);
+        history.timestamps.push(current_timestamp.to_string());
+
+        // CPU 사용량 업데이트
+        if let Some(cpu_value) = cpu {
+            let mut cpu_history = self.cpu_usage_history.lock().await;
+            if cpu_history.len() == 30 {
+                cpu_history.pop_front(); // 30초가 넘으면 가장 오래된 값을 제거
+            }
+            cpu_history.push_back(CpuUsageRecord { timestamp: current_timestamp, usage: cpu_value }); // 새로운 CPU 사용량 추가
+            history.cpu_values.push(cpu_value); // 전체 기록에도 추가
+        }
+
+        // RAM, Storage, USB 사용량 업데이트
+        if let Some(ram_value) = ram {
+            history.ram_values.push(ram_value);
+        }
+        if let Some(storage_value) = storage {
+            history.storage_values.push(storage_value);
+        }
+        if let Some(usb_value) = usb {
+            history.usb_values.push(usb_value);
+            history.usb_connected = usb_value > 0.0; // USB 연결 상태 업데이트
+        }
+    }
+
+    async fn init_cni_values(&self) {
+        info!("init_cni_values-----------------");
+        // 초기값을 설정합니다.
+        let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System);
+    
+        // Vec<FacilityInfo> 에서 system id를 찾아서 system_facility에 저장합니다.
+        let system_facilities = match system_facilities_result {
+            Ok(facilities) => facilities,
+            Err(e) => {
+                error!("Failed to get system facilities: {e}");
+                std::process::exit(1);
+            }
+        };
+    
+        let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
+    
+        // 디버깅을 위해 각 facility 배열 및 id 출력
+        info!("system_facility: {system_facility:?}");
+    
+        if let Some(facility) = system_facility {
+            for (cni, value) in &facility.cnis {
+                if let Some(usage_value) = value {
+                    let usage = match usage_value.parse::<f32>() {
+                        Ok(usage) => usage,
+                        Err(e) => {
+                            warn!("parse {} usage failed: {e:?}", cni);
+                            continue;
+                        }
+                    };
+                    info!("cni: {cni}, usage: {usage}");
+                    match cni.as_str() {
+                        "cpu_usage" => {
+                            // CPU 사용량 초기값 설정
+                            self.update_usage_history(Some(usage), None, None, None);
+                        }
+                        "ram_usage" => {
+                            // RAM 사용량 초기값 설정
+                            self.update_usage_history(None, Some(usage), None, None);
+                        }
+                        "storage_usage" => {
+                            // Storage 사용량 초기값 설정
+                            self.update_usage_history(None, None, Some(usage), None);
+                        }
+                        "usb_usage" => {
+                            // USB 사용량 초기값 설정
+                            self.update_usage_history(None, None, None, Some(usage));
+                        }
+                        "usb_connected" => {
+                            // USB 연결 상태 초기값 설정
+                            self.update_usage_history(None, None, None, Some(usage));
+                        }
+                        "disk_total_space" => {
+                            // 디스크 총 용량 초기값 설정
+                            let mut history = self.resource_usage_history.lock().await; // await 추가
+                            history.disk_total_space = usage as u64;
+                        }
+                        "usb_total_space" => {
+                            // USB 총 용량 초기값 설정
+                            let mut history = self.resource_usage_history.lock().await; // await 추가
+                            history.usb_total_space = usage as u64;
+                        }
+                        _ => {
+                            warn!("Unknown CNI: {cni}");
+                        }
+                    }
+                }
+            }
+        }
+    } 
+
+    async fn register_cni_update_handler(&self) {
+        // 변경 시 처리할 함수를 등록합니다.
+        let mut filter = data_manager::facility::watch::FacilityFilter::default();
+        filter.facility_type = Some(FacilityType::System);
+    
+        if let Err(e) = data_manager::facility::watch::cni_updated(filter, {
+            let self_clone = self.clone();
+            move |value| {
+                let self_clone = self_clone.clone();
+                let value_clone = value.to_string(); // value를 String으로 변환하여 소유권을 가져옵니다.
+                tokio::spawn(async move {
+                    let cni_updated: CniUpdated = match serde_json::from_str(&value_clone) {
+                        Ok(cni) => cni,
+                        Err(e) => {
+                            eprintln!("Failed to parse CNI updated value: {:?}", e);
+                            return;
+                        }
+                    };
+    
+                    // 디버깅용 cni_updated 출력
+                    info!("CNI updated: {:?}", cni_updated);
+    
+                    // cni_updated에서 value를 가져옵니다.
+                    let usage_value = cni_updated.value.clone(); // value 필드가 CniUpdated 구조체에 있어야 합니다.
+    
+                    // usage_value를 f32로 파싱합니다.
+                    let usage = match usage_value.parse::<f32>() {
+                        Ok(usage) => usage,
+                        Err(e) => {
+                            eprintln!("Failed to parse {} usage: {:?}", cni_updated.cni, e);
+                            return;
+                        }
+                    };
+    
+                    match cni_updated.cni.as_str() {
+                        "cpu_usage" => {
+                            // CPU 사용량 업데이트
+                            self_clone.update_usage_history(Some(usage), None, None, None).await;
+                        }
+                        "ram_usage" => {
+                            // RAM 사용량 업데이트
+                            self_clone.update_usage_history(None, Some(usage), None, None).await;
+                        }
+                        "storage_usage" => {
+                            // Storage 사용량 업데이트
+                            self_clone.update_usage_history(None, None, Some(usage), None).await;
+                        }
+                        "usb_usage" => {
+                            // USB 사용량 업데이트
+                            self_clone.update_usage_history(None, None, None, Some(usage)).await;
+                        }
+                        "usb_connected" => {
+                            // USB 연결 상태 업데이트
+                            self_clone.update_usage_history(None, None, None, Some(usage)).await;
+                        }
+                        "disk_total_space" => {
+                            // 디스크 총 용량 업데이트
+                            let mut history = self_clone.resource_usage_history.lock().await;
+                            history.disk_total_space = usage as u64;
+                        }
+                        "usb_total_space" => {
+                            // USB 총 용량 업데이트
+                            let mut history = self_clone.resource_usage_history.lock().await;
+                            history.usb_total_space = usage as u64;
+                        }
+                        _ => {
+                            eprintln!("Unknown CNI: {}", cni_updated.cni);
+                        }
+                    }
+                });
+            }
+        }) {
+            eprintln!("Failed to register CNI updated handler: {:?}", e);
+        }
+    }
+
+    
+}
+
 use warp::Filter;
 
 use super::ACP_HEADER_TOKEN;
@@ -48,6 +356,14 @@ pub(crate) fn get_latest_report(
         .and_then(inner::get_latest_report)
 }
 
+// CPU 사용량 조회
+pub(crate) fn get_cpu_usage(
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("diagnosis" / "cpu")
+        .and(warp::get())
+        .and(warp::header::optional::<String>(ACP_HEADER_TOKEN))
+        .and_then(inner::get_cpu_usage)
+}
 
 // 진단 결과 리포트 삭제
 pub(crate) fn delete_reports(
@@ -62,9 +378,20 @@ mod inner {
     use crate::response::Response;
     use log::*;
     use platform_ipc_helper::sync::diagnosis;
-    use platform_ipc_helper::blocking::data_manager;
-    use platform_common_types::core::FacilityType;
     use serde_json::json;
+    use warp::Rejection;
+
+    use crate::utils::diagnosis::{diagnosis_instance, Usage, CpuUsageRecord};
+
+    async fn get_diagnosis_impl() -> Result<Usage, Rejection> {
+        let diagnosis = diagnosis_instance().lock().await; // MutexGuard를 얻습니다.
+        diagnosis.get_latest_usage().await.map_err(|_| warp::reject()) // 오류를 warp::Rejection으로 변환
+    }
+    
+    async fn get_diagnosis_impl_cpu() -> Result<Vec<CpuUsageRecord>, Rejection> {
+        let diagnosis = diagnosis_instance().lock().await; // MutexGuard를 얻습니다.
+        diagnosis.get_cpu_usage_history().await.map_err(|_| warp::reject()) // 오류를 warp::Rejection으로 변환
+    }
 
     pub async fn get_list(_token: Option<String>) -> Result<impl warp::Reply, warp::Rejection> {
         // TODO 권한 추가
@@ -99,48 +426,6 @@ mod inner {
             error!("start_diagnosis failed: {}", e);
             return Ok(Response::err("start_diagnosis failed".to_string()));
         };
-
-        // 진단 시점의 cpu, memory, disk 정보를 수집
-
-        // system type facility를 가져옴.
-        let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System);
-
-        let system_facilities = match system_facilities_result {
-            Ok(facilities) => facilities,
-            Err(e) => {
-                error!("Failed to get system facilities: {e}");
-                std::process::exit(1);
-            }
-        };
-
-        // system list 에서 name이 system인걸 찾음.
-        let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
-        
-        if let Some(facility) = system_facility {
-            for (cni, value) in &facility.cnis {
-                if let Some(usage_value) = value {
-                    let usage = match usage_value.parse::<f32>() {
-                        Ok(usage) => usage,
-                        Err(e) => {
-                            warn!("parse {} usage failed: {e:?}", cni);
-                            continue;
-                        }
-                    };
-                    // 저장 필요 ..
-                    match cni.as_str() {
-                        "cpu0_usage" => 
-                        "cpu1_usage" => 
-                        "cpu2_usage" => 
-                        "cpu3_usage" => 
-                        "ram_usage" => 
-                        "disk_usage" => 
-                        "usb_usage" => 
-                        _ => info!("Unknown cni: {}", cni),
-                    }
-                }
-            }
-        }
-
 
         Ok(Response::ok())
     }
@@ -201,175 +486,27 @@ mod inner {
             }
         };
 
-        // report 응답 예시 
-
-        /* 
-         "apps": [
-            {
-                "failCount": 0,
-                "items": [
-                    {
-                        "comment": "",
-                        "name": "cpu_usage_fatal",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "cpu_usage_warning",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "memory_usage_fatal",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "memory_usage_warning",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "storage_usage_fatal",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "storage_usage_warning",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    }
-                ],
-                "name": "system",
-                "passCount": 7,
-                "publishedTime": 1740707149
-            },
-            {
-                "failCount": 10,
-                "items": [
-                    {
-                        "comment": "",
-                        "name": "rest_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "rest_real_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "mqtt_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "mqtt_real_connection",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_1",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_2",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "crl_connection_3",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_1",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_2",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    },
-                    {
-                        "comment": "",
-                        "name": "ocsp_connection_3",
-                        "publishedTime": 1740707149,
-                        "result": "pass"
-                    }
-                ],
-                "name": "tms",
-                "passCount": 0,
-                "publishedTime": 1740707149
-            }
-        ],
-        "publishedTime": 1740707133
-    }
-        */
+        let usage = get_diagnosis_impl().await?; // await 사용
+        info!("usage: {:?}", usage);
 
 
-        /*
-        ✅ 성공 응답 (200 OK)
-        {
-        "timestamp": 3043249,
-        "status": "warning",
-        "issues": ["HIGH_CPU", "TMS_DISCONNECTED","USB_DISCONNECTED"],
-        "cpu_usage": 87.2,
-        "storage": {
-            "total": 500000,
-            "used": 450000,
-            "usage": 90.0
-        },
-        "usb": {
-            "connected": true,
-            "total": 128000,
-            "used": 80000,
-            "usage": 62.5
-        },
-        "network_connected": true,
-        "tms_connected": false
-        }
-        ✅ USB 미연결 상태 예시
-        {
-        "timestamp": 34223534,
-        "status": "normal",
-        "issues": [],
-        "cpu_usage": 55.3,
-        "storage": {
-            "total": 500000,
-            "used": 200000,
-            "usage": 40.0
-        },
-        "usb": {
-            "connected": false
-        },
-        "network_connected": true,
-        "tms_connected": true
-        }
-        */
+        // 추가로 실시간 system 사용량을 받아오는 함수를 호출하여 report에 추가 -> utils/diagnostics.rs에 있는 함수 사용
 
         Ok(Response::ok_with_data(json!(report)))
+    }
+
+    pub async fn get_cpu_usage(
+        _token: Option<String>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        // TODO 권한 추가
+        // if !access_control().check_permission(token.as_deref(), Permission::) {
+        //     return Ok(Response::err("Permission denied".to_string()));
+        // }
+
+        let usage = get_diagnosis_impl_cpu().await?; // await 사용
+        info!("usage: {:?}", usage);
+
+        Ok(Response::ok_with_data(json!(usage)))
     }
 
 
@@ -389,33 +526,5 @@ mod inner {
         };
 
         Ok(Response::ok())
-    }
-
-    pub(crate) mod types {
-
-        use serde::{Deserialize, Serialize};
-        pub struct SystemStatus {
-            pub timestamp: String,               // ISO 8601 형식 ("2025-02-19T12:00:00Z")
-            pub status: String,                  // "normal" | "warning" | "critical"
-            pub issues: Vec<String>,              // ["HIGH_CPU", "TMS_DISCONNECTED"]
-            pub cpu_usage: f32,                  // CPU 사용률 (%)
-            pub storage: StorageInfo,             // 저장소 정보
-            pub usb: UsbStatus,                   // USB 정보
-            pub network_connected: bool,          // 네트워크 연결 여부
-            pub tms_connected: bool               // TMS 연결 여부
-        }    
-
-        pub struct UsbStatus {
-            pub connected: bool,                 // USB 연결 여부
-            pub total: Option<u64>,               // 총 저장 공간 (MB)
-            pub used: Option<u64>,                // 사용된 저장 공간 (MB)
-            pub usage: Option<f32>                // USB 사용률 (%)
-        }
-
-        pub struct StorageInfo {
-            pub total: u64,                      // 총 저장 공간 (MB)
-            pub used: u64,                       // 사용된 저장 공간 (MB)
-            pub usage: f32  
-        }
     }
 }
