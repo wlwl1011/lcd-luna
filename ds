@@ -1,57 +1,6 @@
-//utils/diagnosis.rs
-use std::sync::{Mutex, Once};
-use log::error;
-use serde::{Serialize, Deserialize};
-use once_cell::sync::OnceCell;
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Usage {
-    pub timestamp: String,
-    pub cpu_usage: f32,
-    pub ram_usage: f32,
-    pub storage: StorageInfo,
-    pub usb: UsbInfo,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CpuUsageRecord {
-    pub timestamp: u64,
-    pub usage: f32,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UsbInfo {
-    pub connected: bool,
-    pub total: Option<u64>,
-    pub used: Option<u64>,
-    pub usage: Option<f32>,
-}
-
-#[derive(Debug, Clone,Default,Serialize, Deserialize)]
-pub struct StorageInfo {
-    pub total: u64,
-    pub used: u64,
-    pub usage: f32,
-}
-
-pub fn get_current_timestamp() -> String {
-    let now = chrono::Utc::now();
-    now.to_rfc3339()
-}
-
-pub mod implement;
-// DiagnosisInterface 타입 정의
-pub type DiagnosisInterface = implement::DiagnosisImpl;
-
-static DIAGNOSIS_INSTANCE: OnceCell<Mutex<DiagnosisInterface>> = OnceCell::new();
-static INIT: Once = Once::new();
-pub fn init_diagnosis_instance() {
-   INIT.call_once(|| {
-       DIAGNOSIS_INSTANCE
-           .set(Mutex::new(DiagnosisInterface::new()))
-           .expect("Failed to initialize DiagnosisImpl instance");
-   });
-}
-pub fn diagnosis_instance() -> &'static Mutex<DiagnosisInterface> {
-   DIAGNOSIS_INSTANCE.get().expect("Diagnosis instance is not initialized!")
-}
+ INFO  rest_server::utils::diagnosis::implement > Registering CNI update handler...                                                                                                     
+ DEBUG moonlight::blocking                      > Received watch request to luna service                                                                                                
+ DEBUG moonlight::sync                          > Spawning luna service thread                                                                                                          
+thread '<unnamed>' panicked at /root/.cargo/registry/src/index.crates.io-6f17d22bba15001f/glib-0.18.5/src/main_context_futures.rs:562:14:                                               
+Spawning local futures only allowed on the thread owning the MainContext: BoolError { message: "Failed to acquire ownership of main context, already acquired by another thread", filen}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace 
