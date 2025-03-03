@@ -1,138 +1,15 @@
-dashboard/implement.rs 코드 이렇게 하는거 맞아? 엄청 오류 뜨는데? 수정 제대로 해. 그리고 filters/diagnosis.rs 함수에서 사용하는 방법도 알려줘
+platform_ipc_helper::blocking::data_manager::facility::watch
+pub fn cni_updated<F>(filter: FacilityFilter, cb: F) -> Result<()>
+where
+    F: Fn(&str) + Send + Sync + 'static,
+F = impl Fn(&str)
 
-use std::sync::Arc;
-use std::collections::VecDeque;
-use chrono::Utc;
-use platform_ipc_helper::blocking::data_manager;
-use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
-use log::{error, warn, info, debug};
-use tokio::sync::Mutex;
-use crate::utils::diagnosis::{Usage, get_current_timestamp, StorageInfo, UsbInfo, CpuUsageRecord};
-#[derive(Debug, Default)]
-pub struct DiagnosisImpl {
-   resource_usage_history: Arc<Mutex<ResourceUsageHistory>>,
-   cpu_usage_history: Arc<Mutex<VecDeque<CpuUsageRecord>>>,
-}
-#[derive(Debug, Default)]
-pub struct ResourceUsageHistory {
-   pub timestamps: Vec<String>,
-   pub cpu_values: Vec<f32>,
-   pub ram_values: Vec<f32>,
-   pub storage_values: Vec<f32>,
-   pub usb_values: Vec<f32>,
-   pub disk_total_space: u64,
-   pub usb_total_space: u64,
-   pub usb_connected: bool,
-}
-impl DiagnosisImpl {
-   pub async fn new() -> Arc<Self> {
-       let instance = Arc::new(DiagnosisImpl {
-           resource_usage_history: Arc::new(Mutex::new(ResourceUsageHistory::default())),
-           cpu_usage_history: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
-       });
-       let instance_clone = instance.clone();
-       tokio::spawn(async move {
-           instance_clone.init_cni_values().await;
-           instance_clone.register_cni_update_handler.await;
-       });
-       instance
-   }
-   pub async fn get_latest_usage(&self) -> Usage {
-       let history = self.resource_usage_history.lock().await;
-       Usage {
-           timestamp: get_current_timestamp(),
-           cpu_usage: *history.cpu_values.last().unwrap_or(&0.0),
-           ram_usage: *history.ram_values.last().unwrap_or(&0.0),
-           storage: StorageInfo::default(),
-           usb: UsbInfo::default(),
-       }
-   }
-   pub async fn get_cpu_usage_history(&self) -> Vec<CpuUsageRecord> {
-       let cpu_usage_history = self.cpu_usage_history.lock().await;
-       cpu_usage_history.iter().cloned().collect()
-   }
-   pub async fn update_usage_history(&self, cpu: Option<f32>, ram: Option<f32>, storage: Option<f32>, usb: Option<f32>) {
-       let mut history = self.resource_usage_history.lock().await;
-       let current_timestamp = Utc::now().timestamp() as u64;
-       history.timestamps.push(current_timestamp.to_string());
-       if let Some(cpu_value) = cpu {
-           let mut cpu_history = self.cpu_usage_history.lock().await;
-           if cpu_history.len() == 30 {
-               cpu_history.pop_front();
-           }
-           cpu_history.push_back(CpuUsageRecord { timestamp: current_timestamp, usage: cpu_value });
-           history.cpu_values.push(cpu_value);
-       }
-       if let Some(ram_value) = ram {
-           history.ram_values.push(ram_value);
-       }
-       if let Some(storage_value) = storage {
-           history.storage_values.push(storage_value);
-       }
-       if let Some(usb_value) = usb {
-           history.usb_values.push(usb_value);
-           history.usb_connected = usb_value > 0.0;
-       }
-   }
-   async fn init_cni_values(&self) {
-       info!("Initializing CNI values...");
-       let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System).await;
-       let system_facilities = match system_facilities_result {
-           Ok(facilities) => facilities,
-           Err(e) => {
-               error!("Failed to get system facilities: {e}");
-               return;
-           }
-       };
-       let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
-       if let Some(facility) = system_facility {
-           for (cni, value) in &facility.cnis {
-               if let Some(usage_value) = value {
-                   let usage = usage_value.parse::<f32>().unwrap_or(0.0);
-                   match cni.as_str() {
-                       "cpu_usage" => self.update_usage_history(Some(usage), None, None, None).await,
-                       "ram_usage" => self.update_usage_history(None, Some(usage), None, None).await,
-                       _ => warn!("Unknown CNI: {cni}"),
-                   }
-               }
-           }
-       }
-   }
+CNI가 업데이트 되었을 때 호출되는 콜백을 등록합니다.
 
-   async fn register_cni_update_handler(self: Arc<Self>) {
-    info!("Registering CNI update handler...");
-    let mut filter = data_manager::facility::watch::FacilityFilter::default();
-    filter.facility_type = Some(FacilityType::System);
-    let instance_clone = Arc::clone(&self);
-    if let Err(e) = data_manager::facility::watch::cni_updated(filter, move |value| {
-        let instance = Arc::clone(&instance_clone);
-        // 🔹 콜백 내부에서 비동기 실행을 위해 tokio::spawn 사용
-        tokio::spawn(async move {
-            let cni_updated: CniUpdated = match serde_json::from_str(value) {
-                Ok(cni) => cni,
-                Err(e) => {
-                    error!("Failed to parse CNI updated message: {e}");
-                    return;
-                }
-            };
-            let usage = match cni_updated.value.parse::<f32>() {
-                Ok(usage) => usage,
-                Err(e) => {
-                    warn!("Failed to parse {} usage: {e:?}", cni_updated.cni);
-                    return;
-                }
-            };
-            info!("CNI updated: {} - {}", cni_updated.cni, usage);
-            match cni_updated.cni.as_str() {
-                "cpu_usage" => instance.update_usage_history(Some(usage), None, None, None).await,
-                "ram_usage" => instance.update_usage_history(None, Some(usage), None, None).await,
-                "disk_usage" => instance.update_usage_history(None, None, Some(usage), None).await,
-                "usb_usage" => instance.update_usage_history(None, None, None, Some(usage)).await,
-                _ => warn!("Unknown CNI: {}", cni_updated.cni),
-            }
-        });
-    }) {
-        error!("Failed to register CNI updated handler: {:?}", e);
-    }
- }
-}
+Arguments
+filter: 콜백을 수용할 필터. 특정 장치 타입, 프로토콜 타입, 장치 Id를 지정할 수 있습니다.
+cb: CNI가 업데이트 되었을 때 호출되는 콜백
+
+borrowed data escapes outside of closure
+`value` escapes the closure body hereru
+
