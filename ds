@@ -8,9 +8,10 @@ use crate::utils::diagnosis::{Usage, get_current_timestamp, StorageInfo, UsbInfo
 use log::{error, warn, info, debug};
 #[derive(Debug, Default, Clone)]
 pub struct DiagnosisImpl {
-   resource_usage_history: Arc<Mutex<ResourceUsageHistory>>,
-   cpu_usage_history: Arc<Mutex<VecDeque<CpuUsageRecord>>>,
-}
+    resource_usage_history: Mutex<ResourceUsageHistory>,
+    cpu_usage_history: Mutex<VecDeque<CpuUsageRecord>>,
+ }
+ 
 #[derive(Debug, Clone, Default)]
 pub struct ResourceUsageHistory {
    pub timestamps: Vec<String>,
@@ -23,15 +24,17 @@ pub struct ResourceUsageHistory {
    pub usb_connected: bool,
 }
 impl DiagnosisImpl {
-   pub fn new() -> Self {
-       let instance = DiagnosisImpl {
-           resource_usage_history: Arc::new(Mutex::new(ResourceUsageHistory::default())),
-           cpu_usage_history: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
-       };
-       instance.init_cni_values();
-       instance.register_cni_update_handler();
-       instance
-   }
+    pub fn new() -> Arc<Self> {
+        let instance = Arc::new(DiagnosisImpl {
+            resource_usage_history: Mutex::new(ResourceUsageHistory::default()),
+            cpu_usage_history: Mutex::new(VecDeque::with_capacity(30)),
+        });
+        // `Arc` 복사해서 init 및 register 실행
+        let instance_clone = Arc::clone(&instance);
+        instance_clone.init_cni_values();
+        instance_clone.register_cni_update_handler();
+        instance
+    }
    pub fn get_latest_usage(&self) -> Usage {
        let history = self.resource_usage_history.lock().unwrap();
        Usage {
@@ -117,50 +120,41 @@ impl DiagnosisImpl {
        }
    }
 
-   fn register_cni_update_handler(&self) {
-    info!("Registering CNI update handler...");
-       let mut filter = data_manager::facility::watch::FacilityFilter::default();
-       filter.facility_type = Some(FacilityType::System);
-       if let Err(e) = data_manager::facility::watch::cni_updated(filter, move |value| {
-            let cni_updated: CniUpdated = match serde_json::from_str(value){
+      fn register_cni_update_handler(self: Arc<Self>) {
+        info!("Registering CNI update handler...");
+        let mut filter = data_manager::facility::watch::FacilityFilter::default();
+        filter.facility_type = Some(FacilityType::System);
+        let instance_clone = Arc::clone(&self);
+        if let Err(e) = data_manager::facility::watch::cni_updated(filter, move |value| {
+            let instance = instance_clone.as_ref();
+            let cni_updated: CniUpdated = match serde_json::from_str(value) {
                 Ok(cni) => cni,
                 Err(e) => {
                     error!("Failed to parse CNI updated message: {e}");
                     return;
                 }
-            };   
-
-            let usage_value = cni_updated.value.clone();
-
-            let usage = match usage_value.parse::<f32>() {
+            };
+            let usage = match cni_updated.value.parse::<f32>() {
                 Ok(usage) => usage,
                 Err(e) => {
                     warn!("parse {} usage failed: {e:?}", cni_updated.cni);
                     return;
                 }
             };
-
-            info!("CNI updated: {cni_updated:?}");
+            info!("CNI updated: {cni_updated:?} - {usage}");
             match cni_updated.cni.as_str() {
-                "cpu0_usage" | "cpu1_usage" | "cpu2_usage" | "cpu3_usage" => self.update_usage_history(Some(usage), None, None, None),
-                "ram_usage" => self.update_usage_history(None, Some(usage), None, None),
-                "disk_usage" => self.update_usage_history(None, None, Some(usage), None),
-                "usb_usage" => self.update_usage_history(None, None, None, Some(usage)),
+                "cpu0_usage" | "cpu1_usage" | "cpu2_usage" | "cpu3_usage" => instance.update_usage_history(Some(usage), None, None, None),
+                "ram_usage" => instance.update_usage_history(None, Some(usage), None, None),
+                "disk_usage" => instance.update_usage_history(None, None, Some(usage), None),
+                "usb_usage" => instance.update_usage_history(None, None, None, Some(usage)),
                 _ => warn!("Unknown CNI: {cni_updated:?}"),
-           }
-           debug!("CNI updated: {cni_updated:?} - {usage}");
-       }) {
-           eprintln!("Failed to register CNI updated handler: {:?}", e);
-       }
-   }
+            }
+        }) {
+            error!("Failed to register CNI updated handler: {:?}", e);
+        }
+    }
 }
 
-
-borrowed data escapes outside of method
-`self` escapes the method body hererustcClick for full compiler diagnostic
-implement.rs(120, 35): `self` is a reference that is only valid in the method body
-implement.rs(120, 35): let's call the lifetime of this reference `'1`
-borrowed data escapes outside of method
-argument requires that `'1` must outlive `'static`rustcClick for full compiler diagnostic
-implement.rs(120, 35): `self` is a reference that is only valid in the method body
-implement.rs(120, 35): let's call the lifetime of this reference `'1`
+the trait bound `std::sync::Mutex<ResourceUsageHistory>: Clone` is not satisfied
+the trait `Clone` is not implemented for `std::sync::Mutex<ResourceUsageHistory>`rustcClick for full compiler diagnostic
+implement.rs(9, 26): Error originated from macro call here
