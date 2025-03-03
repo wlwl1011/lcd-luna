@@ -1,355 +1,138 @@
-뭔가 ... register함수 부분의 문제만은 아닌 것 같아. 내가 register 함수를 지우고 실행해도잘안돼. 
-여전히 " INFO  rest_server::utils::diagnosis::implement > Initializing CNI value: ram_usage - 27.579111                                                                                         
- DEBUG moonlight::sync                          > Spawning luna service thread                                                                                                          
-thread '<unnamed>' panicked at /root/.cargo/registry/src/index.crates.io-6f17d22bba15001f/glib-0.18.5/src/main_context_futures.rs:562:14:                                               
-Spawning local futures only allowed on the thread owning the MainContext: BoolError { message: "Failed to acquire ownership of main context, already acquired by another thread", filen}
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace   " 오류가 나 ... 
-자세히 찾아보니까 내부 함수에서, "pub(crate) fn get_ls_context(application_name: &str) -> &'static Mutex<LsContext> {
-    LS_CONTEXT.get_or_init(|| {
-        let ls_handle = get_ls_handle().unwrap_or_else(|e| {
-            panic!(
-                "Failed to register luna service handle: {:?} [{application_name}]",
-                e.to_string(),
-            )
-        });
-        let (tx, rx) = async_channel::unbounded();
-        let (watch_tx, watch_rx) = async_channel::unbounded();
+dashboard/implement.rs 코드 이렇게 하는거 맞아? 엄청 오류 뜨는데? 수정 제대로 해. 그리고 filters/diagnosis.rs 함수에서 사용하는 방법도 알려줘
 
-        let context = LsContext {
-            sender: tx,
-            watcher: watch_tx,
-        };
-
-        debug!("Spawning luna service thread");
-        thread::spawn(move || {
-            let main_context = match get_main_context() {
-                Some(main_ctx) => main_ctx.to_owned(),
-                None => MainContext::default(),
-            };
-
-            let main_loop = LSGmain::new_from_context(ls_handle, &main_context);
-
-            main_context.spawn_local(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(mut request) => {
-                            debug!("Received request to luna service");
-                            let responder = request.responder.take();
-                            if let Err(e) = ls_handle.call_one_reply(
-                                &request.uri,
-                                &request.msg,
-                                move |_, message| {
-                                    debug!("Received response from luna service");
-
-                                    let response = message.get_payload()?;
-                                    debug!("Response: {response}");
-
-                                    if let Some(responder) = &responder {
-                                        if let Err(e) =
-                                            responder.blocking_send(Ok(response.to_string()))
-                                        {
-                                            warn!("Failed to send response to channel: {e:?}");
-                                        }
-                                    }
-
-                                    Ok(())
-                                },
-                            ) {
-                                warn!("Failed to send request to luna service: {e:?}");
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to recv request: {e}");
-                        }
-                    }
-                }
-            });" 부분에서 오류가 나는 것 같은데 ... 내 utils/diagnosis.rs, utils/diagnosis/implement.rs, util.rs, filter/diagnosis.rs 부분을 수정할 필요가 있는 것 같아. 밑의 코드를 참고해서 4개의 파일에 대한 코드를 줘
-
-diagnosis말고 coop이라는 instance가 있는데 얘의 동작 방식을 참고 하는게 좋을 것 같아. 내가 처음에 OnceLock 을 쓴 이유가 그냥 얘 따라 한건데 뭔가 잘은 모르겠지만 이유가 있는 것 같기도 해 
-
-1. util/dashboard/coop/implement.rs
-
-"
-use super::{CoopDetailItem, CoopSummary};
-use anyhow::Result;
-use log::*;
-use platform_ipc_helper::sync::data_manager;
-
-#[derive(Default, Debug)]
-pub struct CoopImpl {}
-
-impl CoopImpl {
-    async fn get_summary_inner(&self) -> Result<CoopSummary> {
-        let idus = data_manager::facility::get_list_by_type(&"idu".into()).await?;
-
-        let mut coop_cnt = 0;
-        let mut comfort_sum = 0;
-        for idu in idus {
-            match idu.cnis.get("cooperAvail") {
-                Some(v) => {
-                    if v.iter().find(|v| *v == "on").is_none() {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-
-            match idu.cnis.get("coopOper") {
-                Some(v) => {
-                    if v.iter().find(|v| *v == "on").is_none() {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-
-            match idu.cnis.get("coopStatus") {
-                Some(v) => {
-                    // cooperation이 없으면 스킵
-                    if v.iter().find(|v| *v == "cooperation").is_none() {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-
-            match idu.cnis.get("targetComfortLevel") {
-                Some(v) => match v {
-                    Some(v) => match v.parse::<u32>() {
-                        Ok(lv) => {
-                            comfort_sum += lv;
-                            coop_cnt += 1;
-                        }
-                        Err(e) => {
-                            error!("Failed to parse targetComfortLevel value: {e}");
-                            continue;
-                        }
-                    },
-                    None => continue,
-                },
-                None => continue,
-            }
-        }
-
-        // 0 - 2 good
-        // 2 - 3 normal
-        // 3 -   bad
-        let comfort_avg = if coop_cnt == 0 {
-            1
-        } else {
-            comfort_sum / coop_cnt
-        };
-
-        let average_comfort = if comfort_avg < 2 {
-            "good".to_string()
-        } else if comfort_avg < 3 {
-            "normal".to_string()
-        } else {
-            "bad".to_string()
-        };
-
-        Ok(CoopSummary {
-            average_comfort,
-            coop_control_operation: coop_cnt,
-        })
-    }
-
-    pub async fn get_summary(&self) -> CoopSummary {
-        match self.get_summary_inner().await {
-            Ok(s) => s,
-            Err(e) => {
-                error!("{e}");
-                CoopSummary::default()
-            }
-        }
-    }
-
-    async fn get_detail_inner(&self) -> Result<Vec<CoopDetailItem>> {
-        let idus = data_manager::facility::get_list_by_type(&"idu".into()).await?;
-
-        let mut coop_cnt = 0;
-        let mut coop_list = vec![];
-        for idu in &idus {
-            match idu.cnis.get("cooperAvail") {
-                Some(v) => {
-                    if !v.iter().any(|v| *v == "on") {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-
-            match idu.cnis.get("coopOper") {
-                Some(v) => {
-                    if !v.iter().any(|v| *v == "on") {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-
-            match idu.cnis.get("coopStatus") {
-                Some(v) => {
-                    // cooperation이 없으면 스킵
-                    if !v.iter().any(|v| *v == "cooperation") {
-                        continue;
-                    }
-                }
-                None => continue,
-            }
-
-            let parent = match idu.parent_path.clone() {
-                Some(p) => match p.split('/').last() {
-                    Some(p) => p.to_string(),
-                    None => continue,
-                },
-                None => continue,
-            };
-
-            let comfort_level = match idu.cnis.get("targetComfortLevel") {
-                Some(Some(v)) => match v.parse::<u32>() {
-                    Ok(lv) => lv,
-                    Err(e) => {
-                        error!("Failed to parse targetComfortLevel value: {e}");
-                        continue;
-                    }
-                },
-                Some(None) => continue,
-                None => continue,
-            };
-
-            let target_addr = match idu.cnis.get("targetCoopAddr") {
-                Some(Some(v)) => match v.parse::<u32>() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        error!("Failed to parse targetComfortLevel value: {e}");
-                        continue;
-                    }
-                },
-                Some(None) => continue,
-                None => continue,
-            };
-
-            let target_idu = match idus.iter().find(|i| match i.extended_info.get("lgap") {
-                Some(e) => match e.get("address") {
-                    Some(a) => *a == target_addr,
-                    None => false,
-                },
-                None => false,
-            }) {
-                Some(t) => t.name.clone(),
-                None => continue,
-            };
-
-            coop_cnt += 1;
-            coop_list.push(CoopDetailItem {
-                index: coop_cnt,
-                odu: parent,
-                coop_idu: idu.name.clone(),
-                comfort_level,
-                target_idu,
-            })
-        }
-
-        Ok(coop_list)
-    }
-
-    pub async fn get_detail(&self) -> Vec<CoopDetailItem> {
-        match self.get_detail_inner().await {
-            Ok(s) => s,
-            Err(e) => {
-                error!("{e}");
-                vec![]
-            }
-        }
-    }
-}
-
-"
-
-2.utils/dashboard/coop.rs
-
-"
-use log::*;
-use std::sync::OnceLock;
-
-use serde::Serialize;
+use std::sync::Arc;
+use std::collections::VecDeque;
+use chrono::Utc;
+use platform_ipc_helper::blocking::data_manager;
+use platform_common_types::core::{facility::signals::CniUpdated, FacilityType};
+use log::{error, warn, info, debug};
 use tokio::sync::Mutex;
-
-#[cfg(not(feature = "mock"))]
-pub mod implement;
-#[cfg(feature = "mock")]
-pub mod mock;
-
-#[cfg(feature = "mock")]
-type CoopInterface = mock::CoopMock;
-#[cfg(not(feature = "mock"))]
-type CoopInterface = implement::CoopImpl;
-
-static COOP_INSTANCE: OnceLock<Mutex<CoopInterface>> = OnceLock::new();
-
-pub fn init_coop_instance() {
-    COOP_INSTANCE.get_or_init(Mutex::default);
+use crate::utils::diagnosis::{Usage, get_current_timestamp, StorageInfo, UsbInfo, CpuUsageRecord};
+#[derive(Debug, Default)]
+pub struct DiagnosisImpl {
+   resource_usage_history: Arc<Mutex<ResourceUsageHistory>>,
+   cpu_usage_history: Arc<Mutex<VecDeque<CpuUsageRecord>>>,
 }
+#[derive(Debug, Default)]
+pub struct ResourceUsageHistory {
+   pub timestamps: Vec<String>,
+   pub cpu_values: Vec<f32>,
+   pub ram_values: Vec<f32>,
+   pub storage_values: Vec<f32>,
+   pub usb_values: Vec<f32>,
+   pub disk_total_space: u64,
+   pub usb_total_space: u64,
+   pub usb_connected: bool,
+}
+impl DiagnosisImpl {
+   pub async fn new() -> Arc<Self> {
+       let instance = Arc::new(DiagnosisImpl {
+           resource_usage_history: Arc::new(Mutex::new(ResourceUsageHistory::default())),
+           cpu_usage_history: Arc::new(Mutex::new(VecDeque::with_capacity(30))),
+       });
+       let instance_clone = instance.clone();
+       tokio::spawn(async move {
+           instance_clone.init_cni_values().await;
+           instance_clone.register_cni_update_handler.await;
+       });
+       instance
+   }
+   pub async fn get_latest_usage(&self) -> Usage {
+       let history = self.resource_usage_history.lock().await;
+       Usage {
+           timestamp: get_current_timestamp(),
+           cpu_usage: *history.cpu_values.last().unwrap_or(&0.0),
+           ram_usage: *history.ram_values.last().unwrap_or(&0.0),
+           storage: StorageInfo::default(),
+           usb: UsbInfo::default(),
+       }
+   }
+   pub async fn get_cpu_usage_history(&self) -> Vec<CpuUsageRecord> {
+       let cpu_usage_history = self.cpu_usage_history.lock().await;
+       cpu_usage_history.iter().cloned().collect()
+   }
+   pub async fn update_usage_history(&self, cpu: Option<f32>, ram: Option<f32>, storage: Option<f32>, usb: Option<f32>) {
+       let mut history = self.resource_usage_history.lock().await;
+       let current_timestamp = Utc::now().timestamp() as u64;
+       history.timestamps.push(current_timestamp.to_string());
+       if let Some(cpu_value) = cpu {
+           let mut cpu_history = self.cpu_usage_history.lock().await;
+           if cpu_history.len() == 30 {
+               cpu_history.pop_front();
+           }
+           cpu_history.push_back(CpuUsageRecord { timestamp: current_timestamp, usage: cpu_value });
+           history.cpu_values.push(cpu_value);
+       }
+       if let Some(ram_value) = ram {
+           history.ram_values.push(ram_value);
+       }
+       if let Some(storage_value) = storage {
+           history.storage_values.push(storage_value);
+       }
+       if let Some(usb_value) = usb {
+           history.usb_values.push(usb_value);
+           history.usb_connected = usb_value > 0.0;
+       }
+   }
+   async fn init_cni_values(&self) {
+       info!("Initializing CNI values...");
+       let system_facilities_result = data_manager::facility::get_list_by_type(&FacilityType::System).await;
+       let system_facilities = match system_facilities_result {
+           Ok(facilities) => facilities,
+           Err(e) => {
+               error!("Failed to get system facilities: {e}");
+               return;
+           }
+       };
+       let system_facility = system_facilities.iter().find(|facility| facility.name == "system");
+       if let Some(facility) = system_facility {
+           for (cni, value) in &facility.cnis {
+               if let Some(usage_value) = value {
+                   let usage = usage_value.parse::<f32>().unwrap_or(0.0);
+                   match cni.as_str() {
+                       "cpu_usage" => self.update_usage_history(Some(usage), None, None, None).await,
+                       "ram_usage" => self.update_usage_history(None, Some(usage), None, None).await,
+                       _ => warn!("Unknown CNI: {cni}"),
+                   }
+               }
+           }
+       }
+   }
 
-pub fn coop_instance() -> &'static Mutex<CoopInterface> {
-    match COOP_INSTANCE.get() {
-        Some(c) => c,
-        None => {
-            error!("Failed to get coop instance. exit.");
-            std::process::exit(1);
-        }
+   async fn register_cni_update_handler(self: Arc<Self>) {
+    info!("Registering CNI update handler...");
+    let mut filter = data_manager::facility::watch::FacilityFilter::default();
+    filter.facility_type = Some(FacilityType::System);
+    let instance_clone = Arc::clone(&self);
+    if let Err(e) = data_manager::facility::watch::cni_updated(filter, move |value| {
+        let instance = Arc::clone(&instance_clone);
+        // 🔹 콜백 내부에서 비동기 실행을 위해 tokio::spawn 사용
+        tokio::spawn(async move {
+            let cni_updated: CniUpdated = match serde_json::from_str(value) {
+                Ok(cni) => cni,
+                Err(e) => {
+                    error!("Failed to parse CNI updated message: {e}");
+                    return;
+                }
+            };
+            let usage = match cni_updated.value.parse::<f32>() {
+                Ok(usage) => usage,
+                Err(e) => {
+                    warn!("Failed to parse {} usage: {e:?}", cni_updated.cni);
+                    return;
+                }
+            };
+            info!("CNI updated: {} - {}", cni_updated.cni, usage);
+            match cni_updated.cni.as_str() {
+                "cpu_usage" => instance.update_usage_history(Some(usage), None, None, None).await,
+                "ram_usage" => instance.update_usage_history(None, Some(usage), None, None).await,
+                "disk_usage" => instance.update_usage_history(None, None, Some(usage), None).await,
+                "usb_usage" => instance.update_usage_history(None, None, None, Some(usage)).await,
+                _ => warn!("Unknown CNI: {}", cni_updated.cni),
+            }
+        });
+    }) {
+        error!("Failed to register CNI updated handler: {:?}", e);
     }
+ }
 }
-
-#[derive(Debug, Default, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CoopSummary {
-    // 0 - 2 good
-    // 2 - 3 normal
-    // 3 -   bad
-    pub average_comfort: String,
-    pub coop_control_operation: u32,
-}
-
-#[derive(Debug, Default, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CoopDetailItem {
-    pub index: usize,
-    /// Odu 이름
-    pub odu: String,
-    /// 협조 Idu 이름
-    pub coop_idu: String,
-    /// AI엔진 target_comfort_level
-    pub comfort_level: u32,
-    /// 대상 idu 이름
-    pub target_idu: String,
-}
-
-"
-3. util/dashboard.rs
-"
-use airq::init_airq_instance;
-use co2::init_co2_instance;
-use comfort::init_comfort_instance;
-use coop::init_coop_instance;
-use refrigerant::init_refrigerant_instance;
-use smartcare::init_smartcare_instance;
-
-pub mod airq;
-pub mod co2;
-pub mod comfort;
-pub mod coop;
-pub mod refrigerant;
-pub mod smartcare;
-
-pub async fn init() {
-    init_coop_instance();
-    init_smartcare_instance();
-    init_co2_instance();
-    init_airq_instance();
-    init_comfort_instance();
-    init_refrigerant_instance();
-}
-
-"
