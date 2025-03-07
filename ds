@@ -1,15 +1,54 @@
-platform_ipc_helper::blocking::data_manager::facility::watch
-pub fn cni_updated<F>(filter: FacilityFilter, cb: F) -> Result<()>
-where
-    F: Fn(&str) + Send + Sync + 'static,
-F = impl Fn(&str)
+void PopTitleErrorQRInfoBtn(PopupData*pPopupData)
+{
+	lv_ui*ui=Ui_GetInstance();
 
-CNI가 업데이트 되었을 때 호출되는 콜백을 등록합니다.
+	ui->mScreenType=SCR_TYPE_POPUP;
+	pPopupData->ePopType = POP_TYPE_TITLE_ERROR_QR_INFO_BTN;
 
-Arguments
-filter: 콜백을 수용할 필터. 특정 장치 타입, 프로토콜 타입, 장치 Id를 지정할 수 있습니다.
-cb: CNI가 업데이트 되었을 때 호출되는 콜백
+	ui->mpPopupPage->mpLayoutTitle = CreateLayout(ui->mpPopupPage->mpPageWindowArea, LV_ALIGN_TOP_MID, 0, 0, 320, 45);
 
-borrowed data escapes outside of closure
-`value` escapes the closure body hereru
+	ui->mpPopupPage->mpLabelTitle=CreateText(ui->mpPopupPage->mpLayoutTitle, pPopupData->mushTitle_TR, LV_ALIGN_BOTTOM_MID, 0, 0);
+	lv_obj_set_style_text_font(ui->mpPopupPage->mpLabelTitle, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);
 
+	ui->mpPopupPage->mpLayoutQRInfoText = CreateLayout(ui->mpPopupPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, 0, 275, 118);
+
+	lv_obj_align_to(ui->mpPopupPage->mpLayoutQRInfoText, ui->mpPopupPage->mpLayoutTitle, LV_ALIGN_OUT_BOTTOM_MID, 0, 12);
+
+	if (Get_Device_Status()->isCommon) 
+	{
+		ui->mpPopupPage->mpLayoutQRCode = CreateLayout(ui->mpPopupPage->mpLayoutQRInfoText, LV_ALIGN_LEFT_MID, 0, 0, 118, 118);
+
+		lv_obj_set_style_bg_opa(ui->mpPopupPage->mpLayoutQRCode, 255, LV_PART_MAIN);
+		lv_obj_set_style_radius(ui->mpPopupPage->mpLayoutQRCode, 8, LV_PART_MAIN);
+
+		ui->mpPopupPage->mpQRCode = CreateQR(ui->mpPopupPage->mpLayoutQRCode, pPopupData->QRString, 113, LV_ALIGN_CENTER, 0, 0);
+	}
+
+	if (Get_Device_Status()->isCommon) 
+	{
+		ui->mpPopupPage->mpLayoutErrorText = CreateLayout(ui->mpPopupPage->mpLayoutQRInfoText, LV_ALIGN_RIGHT_MID,0,0,143,107);
+		ui->mpPopupPage->mpLayoutErrorCode = CreateLayout(ui->mpPopupPage->mpLayoutErrorText, LV_ALIGN_TOP_LEFT,0,0,94,29);
+	}
+	else
+	{
+		ui->mpPopupPage->mpLayoutErrorText = CreateLayout(ui->mpPopupPage->mpLayoutQRInfoText, LV_ALIGN_CENTER,0,0,275,118);
+		ui->mpPopupPage->mpLayoutErrorCode = CreateLayout(ui->mpPopupPage->mpLayoutErrorText, LV_ALIGN_TOP_MID,0,0,94,29);
+	}
+
+
+	extern const lv_img_dsc_t ic_warning_fill;
+	ui->mpPopupPage->mpImgWarningFill = CreateImage(ui->mpPopupPage->mpLayoutErrorCode, &ic_warning_fill, LV_ALIGN_LEFT_MID, 0, 0);
+
+	ui->mpPopupPage->mpLabelErrorCode = CreateErrorText(ui->mpPopupPage->mpLayoutErrorCode, pPopupData->ErrorCode, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_align_to(ui->mpPopupPage->mpLabelErrorCode, ui->mpPopupPage->mpImgWarningFill, LV_ALIGN_OUT_RIGHT_MID, 8,0);
+	lv_obj_set_style_text_font(ui->mpPopupPage->mpLabelErrorCode, &KR_FONT_20M, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	ui->mpPopupPage->mpLayoutErrorTextInfo = CreateLayout(ui->mpPopupPage->mpLayoutErrorText, LV_ALIGN_TOP_LEFT, 0, 34, 275, 78);
+
+	ui->mpPopupPage->mpLabelInformation = CreateText(ui->mpPopupPage->mpLayoutErrorTextInfo, pPopupData->mushQRInfo_TR, LV_ALIGN_RIGHT_MID, 0, 0);
+	lv_obj_set_style_text_font(ui->mpPopupPage->mpLabelInformation, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(ui->mpPopupPage->mpLabelInformation, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+
+	ui->mpPopupPage->mpBtnCancel=CreateButton(ui->mpPopupPage->mpPageWindowArea,pPopupData->mushBtnCancle_TR,LV_ALIGN_BOTTOM_MID,0,0);
+
+}
