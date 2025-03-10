@@ -1,54 +1,349 @@
-void PopTitleErrorQRInfoBtn(PopupData*pPopupData)
-{
-	lv_ui*ui=Ui_GetInstance();
+이 코드에서 기존에는 ssh 로 접근할 때 비밀번호가 없었는데, 이제 비밀번호가 생겼어. 그래서 이를 적용해야할 것 같은데, 기존 동작하는건 다 동작하도록, 개선할 부분이 있다면 개선을 해줬으면 좋게ㅐㅆ어
 
-	ui->mScreenType=SCR_TYPE_POPUP;
-	pPopupData->ePopType = POP_TYPE_TITLE_ERROR_QR_INFO_BTN;
+import argparse
+import time
+import os
+import platform
+import pandas as pd
+import pexpect
+import threading
+import subprocess
+import yaml
+from datetime import datetime
 
-	ui->mpPopupPage->mpLayoutTitle = CreateLayout(ui->mpPopupPage->mpPageWindowArea, LV_ALIGN_TOP_MID, 0, 0, 320, 45);
+# 상수 정의
+CHECK_INTERVAL = 1  # 1초마다 체크
+SSH_TIMEOUT = 30
+SSH_PROMPT = r'\[root@webOSNano-unofficial ~\]#'
+EXCEL_FILE = 'local_file.xlsx'
 
-	ui->mpPopupPage->mpLabelTitle=CreateText(ui->mpPopupPage->mpLayoutTitle, pPopupData->mushTitle_TR, LV_ALIGN_BOTTOM_MID, 0, 0);
-	lv_obj_set_style_text_font(ui->mpPopupPage->mpLabelTitle, &KR_FONT_24B, LV_PART_MAIN | LV_STATE_DEFAULT);
+# 현재 행 인덱스를 저장할 변수
+current_row_index = 0
+connection_status = False  # 연결 상태를 저장할 변수
+lock = threading.Lock()  # 스레드 안전을 위한 락
 
-	ui->mpPopupPage->mpLayoutQRInfoText = CreateLayout(ui->mpPopupPage->mpPageWindowArea, LV_ALIGN_CENTER, 0, 0, 275, 118);
-
-	lv_obj_align_to(ui->mpPopupPage->mpLayoutQRInfoText, ui->mpPopupPage->mpLayoutTitle, LV_ALIGN_OUT_BOTTOM_MID, 0, 12);
-
-	if (Get_Device_Status()->isCommon) 
-	{
-		ui->mpPopupPage->mpLayoutQRCode = CreateLayout(ui->mpPopupPage->mpLayoutQRInfoText, LV_ALIGN_LEFT_MID, 0, 0, 118, 118);
-
-		lv_obj_set_style_bg_opa(ui->mpPopupPage->mpLayoutQRCode, 255, LV_PART_MAIN);
-		lv_obj_set_style_radius(ui->mpPopupPage->mpLayoutQRCode, 8, LV_PART_MAIN);
-
-		ui->mpPopupPage->mpQRCode = CreateQR(ui->mpPopupPage->mpLayoutQRCode, pPopupData->QRString, 113, LV_ALIGN_CENTER, 0, 0);
-	}
-
-	if (Get_Device_Status()->isCommon) 
-	{
-		ui->mpPopupPage->mpLayoutErrorText = CreateLayout(ui->mpPopupPage->mpLayoutQRInfoText, LV_ALIGN_RIGHT_MID,0,0,143,107);
-		ui->mpPopupPage->mpLayoutErrorCode = CreateLayout(ui->mpPopupPage->mpLayoutErrorText, LV_ALIGN_TOP_LEFT,0,0,94,29);
-	}
-	else
-	{
-		ui->mpPopupPage->mpLayoutErrorText = CreateLayout(ui->mpPopupPage->mpLayoutQRInfoText, LV_ALIGN_CENTER,0,0,275,118);
-		ui->mpPopupPage->mpLayoutErrorCode = CreateLayout(ui->mpPopupPage->mpLayoutErrorText, LV_ALIGN_TOP_MID,0,0,94,29);
-	}
+def find_next_row_index():
+    """Find the next row index where 'Check' is empty or 'X'."""
+    global current_row_index
+    try:
+        df = pd.read_excel(EXCEL_FILE)
+        for index, row in df.iterrows():
+            if pd.isna(row['Check']) or row['Check'] == 'X':
+                current_row_index = index
+                return True
+        print("[x] No available rows found.")
+        return False
+    except Exception as e:
+        print(f"[x] Failed to find next row index: {e}")
+        return False
 
 
-	extern const lv_img_dsc_t ic_warning_fill;
-	ui->mpPopupPage->mpImgWarningFill = CreateImage(ui->mpPopupPage->mpLayoutErrorCode, &ic_warning_fill, LV_ALIGN_LEFT_MID, 0, 0);
+def check_ssh_connection(host, username):
+    """SSH 연결을 확인합니다."""
+    if platform.system() == "Windows":
+        # Windows에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} \"ls\""
+    else:
+        # Linux에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} 'ls'"
 
-	ui->mpPopupPage->mpLabelErrorCode = CreateErrorText(ui->mpPopupPage->mpLayoutErrorCode, pPopupData->ErrorCode, LV_ALIGN_CENTER, 0, 0);
-	lv_obj_align_to(ui->mpPopupPage->mpLabelErrorCode, ui->mpPopupPage->mpImgWarningFill, LV_ALIGN_OUT_RIGHT_MID, 8,0);
-	lv_obj_set_style_text_font(ui->mpPopupPage->mpLabelErrorCode, &KR_FONT_20M, LV_PART_MAIN | LV_STATE_DEFAULT);
+    while True:
+        try:
+            # 명령어 실행 (2초 제한)
+            write_result = subprocess.run(write_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+           
+    # 터미널 명령어 실행 (읽기)
+            return True  # 연결 성공 시 True로 설정
 
-	ui->mpPopupPage->mpLayoutErrorTextInfo = CreateLayout(ui->mpPopupPage->mpLayoutErrorText, LV_ALIGN_TOP_LEFT, 0, 34, 275, 78);
+        except subprocess.TimeoutExpired:
+            return False  # 연결 실패 시 False로 설정
 
-	ui->mpPopupPage->mpLabelInformation = CreateText(ui->mpPopupPage->mpLayoutErrorTextInfo, pPopupData->mushQRInfo_TR, LV_ALIGN_RIGHT_MID, 0, 0);
-	lv_obj_set_style_text_font(ui->mpPopupPage->mpLabelInformation, &KR_FONT_18M, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(ui->mpPopupPage->mpLabelInformation, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+        except Exception as e:
+            return False  # 연결 실패 시 False로 설정
 
-	ui->mpPopupPage->mpBtnCancel=CreateButton(ui->mpPopupPage->mpPageWindowArea,pPopupData->mushBtnCancle_TR,LV_ALIGN_BOTTOM_MID,0,0);
 
-}
+
+def read_sn_mac_from_file():
+    """엑셀 파일에서 SN과 MAC 주소를 읽습니다."""
+    try:
+        df = pd.read_excel(EXCEL_FILE)
+        if df.empty or current_row_index >= len(df):
+            print("[x] Excel FAIL (No more rows to read)")
+            return False, None, None
+        
+        serial_number = df.at[current_row_index, 'Serial Number']
+        mac_address = df.at[current_row_index, 'Eth Address']
+        return True, serial_number, mac_address
+    except Exception as e:
+        print(f"[x] Excel read FAIL ({e})")
+        return False, None, None
+
+def write_sn_mac_to_board(sn, mac, host, username):
+    """보드에 SN과 MAC 주소를 씁니다."""
+
+    if platform.system() == "Windows":
+        # Windows에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} \"echo {sn} > /persist/serial_number && /usr/bin/misc-util ETH_MAC {mac}\""
+    else:
+        # Linux에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} 'echo {sn} > /persist/serial_number && /usr/bin/misc-util  ETH_MAC {mac}\'"
+    
+    write_result = subprocess.run(write_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1)
+    return write_result
+
+
+import platform
+import subprocess
+
+def write_sn_mac_to_board(sn, mac, host, username):
+    """보드에 SN과 MAC 주소를 씁니다."""
+    
+    if platform.system() == "Windows":
+        # Windows에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} \"echo {sn} > /persist/serial_number && /usr/bin/misc-util ETH_MAC {mac}\""
+        check_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} \"cat /persist/serial_number && /usr/bin/misc-util ETH_MAC\""
+    else:
+        # Linux에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} 'echo {sn} > /persist/serial_number && /usr/bin/misc-util ETH_MAC {mac}'"
+        check_command = f"ssh -o StrictHostKeyChecking=no {username}@{host} 'cat /persist/serial_number && /usr/bin/misc-util ETH_MAC'"
+    
+    try:
+        # SN과 MAC 주소를 보드에 쓰기
+        write_result = subprocess.run(write_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1)
+        print(write_result.stderr.decode('utf-8', errors='ignore'))
+
+        # 작성된 SN과 MAC 주소 확인
+        check_result = subprocess.run(check_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1)
+        
+        # 결과 출력
+        output = check_result.stdout.decode().strip().split('\n')
+        written_sn = output[0]
+        written_mac = output[1] if len(output) > 1 else None
+        
+        if written_sn == sn and written_mac == mac:
+            print("[v] Serial Number write OK")
+            print("[v] Eth MAC Addr write OK")
+            return True
+        else:
+            print("[v] Serial number, eth mac address write FAIL")
+            print("Intended ------------------------- actual")
+            print(f"Serial number : {sn} ------------ {written_sn}")
+            print(f"eth mac address : {mac} -------- {written_mac}")
+            return False
+            
+    except subprocess.CalledProcessError as e:
+        print(f"[x] Serial number, Eth mac write FAIL {e.stderr.decode().strip()}")
+        return False
+    except Exception as e:
+        print(f"[x] Serial number, Eth mac write FAIL {e}")
+        return False
+
+def update_check_column():
+    """엑셀 파일의 'Check' 열을 업데이트합니다."""
+    global current_row_index
+    try:
+        df = pd.read_excel(EXCEL_FILE, dtype={'Check': str})
+        if df.empty:
+            print("[v] Execl Check FAIL (Empty)")
+            return False
+        
+        df.at[current_row_index, 'Check'] = 'O'
+        df.to_excel(EXCEL_FILE, index=False)
+        print("[v] Execl Check OK")
+        return True
+    except Exception as e:
+
+        print(f"[v] Execl Check FAIL ({e})")
+        return False
+
+"""
+def start_fct_test(hostIp):
+    ssh_command = f"ssh -o StrictHostKeyChecking=no root@{hostIp} python3 /lg_rw/fct_test/test_start_dq1.py "
+    
+    try:
+        child = pexpect.spawn(ssh_command)
+        child.interact()
+
+    except Exception as e:
+        print(f"Err: {e}")
+
+"""
+
+def start_fct_test(hostIp):
+    ssh_command = f"ssh -o StrictHostKeyChecking=no root@{hostIp} python3 /lg_rw/fct_test/test_start_dq1.py"
+
+    try:
+        # subprocess.Popen을 사용하여 SSH 명령 실행
+        process = subprocess.Popen(ssh_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+
+        while True:
+            # stdout에서 한 줄씩 읽기
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                print(output, end='')  # 출력
+
+                # 사용자 입력 받기
+                if 'y/n' in output:  # 특정 프롬프트가 있을 때
+                    user_input = input('Enter y or n: ')
+                    process.stdin.write(user_input + '\n')
+                    process.stdin.flush()
+
+        # 오류 출력 처리
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            print(stderr_output)
+
+    except Exception as e:
+        print(f"Err: {e}")
+        return False
+    return True
+
+def remove_known_host(known_hosts_path, hostIp):
+    if os.path.exists(known_hosts_path):
+        with open(known_hosts_path, 'r') as file:
+            known_hosts = file.readlines()
+        
+        # 호스트가 known_hosts에 존재하는지 확인
+        host_found = any(hostIp in line for line in known_hosts)
+        
+        if host_found:
+            print(f"[log] Removing {hostIp} from known_hosts...")
+            subprocess.run(f"ssh-keygen -R {hostIp}", shell=True)
+        return True
+        
+    else:
+        print(f"[log] {known_hosts_path} does not exist.")
+        return False
+
+
+def send_time_now(username, hostIp):
+    """현재 시간을 보드에 전송"""
+
+    now = datetime.now()
+    current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+    
+    if platform.system() == "Windows":
+        # Windows에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{hostIp} \"echo {current_time} > /home/root/current_time\""
+        read_command = f"ssh -o StrictHostKeyChecking=no {username}@{hostIp} \"cat /home/root/current_time\""
+    else:
+        # Linux에서 사용할 SSH 명령어
+        write_command = f"ssh -o StrictHostKeyChecking=no {username}@{hostIp} 'echo {current_time} > /home/root/current_time'"
+        read_command = f"ssh -o StrictHostKeyChecking=no {username}@{hostIp} 'cat /home/root/current_time'"
+
+    try:
+        # 터미널 명령어 실행 (쓰기)
+        write_result = subprocess.run(write_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # 터미널 명령어 실행 (읽기)
+        read_result = subprocess.run(read_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # 저장된 시간과 현재 시간 비교
+        read_time = read_result.stdout.decode('utf-8', errors='ignore').strip()
+        
+        if read_time != current_time:
+            print("[x] Time write FAIL")
+            return False
+        else:
+            print("[v] Time write OK")
+            return True
+    
+    except subprocess.CalledProcessError as e:
+        print(f"Time write FAIL ({e})")
+        return False
+
+
+
+def write_cfg_to_board(new_mac, new_serial, hostIp):
+    # 현재 디렉토리에서 cfg.yml 파일 읽기
+    with open('cfg.yml', 'r') as file:
+        cfg_data = yaml.safe_load(file)  # YAML 파일을 파싱
+
+    # mac 주소와 serial 번호 수정
+    cfg_data['ETH']['mac'] = new_mac
+    cfg_data['VERSION']['serial'] = new_serial
+
+    # 수정된 내용을 다시 YAML 형식으로 저장
+    with open('cfg.yml', 'w') as file:
+        yaml.dump(cfg_data, file)
+
+    if platform.system() == "Windows":
+    # SSH 명령어를 통해 원격 서버에 파일 내용 쓰기
+        check_command = f"ssh -o StrictHostKeyChecking=no root@{hostIp} \"cat > /lg_rw/fct_test/cfg.yml\""
+    else:
+        check_command = f"ssh -o StrictHostKeyChecking=no root@{hostIp} 'cat > /lg_rw/fct_test/cfg.yml'"
+    
+    try:
+        # subprocess.Popen을 사용하여 파일 내용을 전송
+        with open('cfg.yml', 'rb') as file:
+            process = subprocess.Popen(check_command, shell=True, stdin=subprocess.PIPE)
+            process.communicate(input=file.read())
+        
+        print("[v] cfg write OK")  # 성공 메시지 출력
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"[x] cfg write FAIL {e.stderr.decode().strip()}")
+        return False
+    except Exception as e:
+        print(f"[x] cfg write FAIL {e}")
+        return False
+
+def main(hostIp, username):
+
+    # known host 삭제
+    known_hosts_path = os.path.expanduser("~/.ssh/known_hosts")
+    if not remove_known_host(known_hosts_path, hostIp):
+        return
+
+    # Find the next row index to start processing
+    if not find_next_row_index():
+        return
+
+    
+
+    while True:
+        print("*********** Do you want to start FCT ? ***********")
+        user_input = input(" Please answer (y/n): ").strip().lower()
+        if user_input == 'y':
+            while True:
+                if check_ssh_connection(hostIp, username):
+                    print("==================Connection OK========================")
+                    read_result, sn, mac = read_sn_mac_from_file()
+                    if read_result:
+                        print(f"[Serial Number] {sn}\n[ MAC Address ] {mac}")
+                        #맥주소 00:1A:2B:3C:4D:5F 되어있을 경우 : 지우기
+                        mac = mac.replace(":", "")
+
+                        if write_sn_mac_to_board(sn, mac, hostIp, username):
+                            #colum date
+                            if update_check_column():
+                                #cfg 파일 전송
+                                if write_cfg_to_board(mac,sn,hostIp):
+                                    if send_time_now(username, hostIp):
+                                        #fct 시작
+                                        if start_fct_test(hostIp):
+                                            print("[v] FCT OK")
+                                            print("================== Please replace the board for the next test ==================")
+                                            time.sleep(20)            
+                                            break
+        elif user_input == 'n':
+            print("[v] Exit program")
+            break
+        else:
+            print("Please Input y or n")
+            
+
+        
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description='SSH to a remote server and write/read the current time.')
+    parser.add_argument('hostIp', nargs='?', default='192.168.1.101', type=str, help='The IP address of the remote host (default: 192.168.1.100)')
+    
+    args = parser.parse_args()
+    hostIp = args.hostIp
+    username = 'root'
+    main(hostIp, username)
